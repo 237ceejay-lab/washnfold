@@ -1891,7 +1891,8 @@ let DB = {
   customerHistory: {},
   deptHistory: [],
   adminActivityLog: [], // legacy
-  activityLog: []  // V2 unified log: {id, timestamp, accountType, username, action, detail, page}
+  activityLog: [],  // V2 unified log: {id, timestamp, accountType, username, action, detail, page}
+  deletedSeedIds: [] // IDs of seed finance records that the user has deliberately deleted
 };
 
 let currentInvoiceItems = [];
@@ -2084,7 +2085,26 @@ async function loadCloudDataAndProceed() {
   if (rawData) {
     try {
       const loaded = JSON.parse(rawData);
+      // Before cloud merge: preserve locally-saved deletedSeedIds so cloud data
+      // cannot resurrect records the user deleted between cloud sync cycles
+      let _localDeletedSeeds = [];
+      try {
+        const localSnap = localStorage.getItem('washnfold_db');
+        if (localSnap) {
+          const localParsed = JSON.parse(localSnap);
+          _localDeletedSeeds = localParsed.deletedSeedIds || [];
+        }
+      } catch(_) {}
       mergeLoadedData(loaded);
+      // Re-apply local deletedSeedIds — union with whatever came from cloud
+      if (_localDeletedSeeds.length > 0) {
+        if (!DB.deletedSeedIds) DB.deletedSeedIds = [];
+        _localDeletedSeeds.forEach(id => {
+          if (!DB.deletedSeedIds.includes(id)) DB.deletedSeedIds.push(id);
+        });
+        // Also remove any seed records that are in the local deletion list
+        DB.finance = DB.finance.filter(r => !DB.deletedSeedIds.includes(r.id));
+      }
       if (msgEl) msgEl.textContent = '✓ Session restored — all data up to date!';
     } catch(e) {
       if (msgEl) msgEl.textContent = 'Starting with default data.';
@@ -2134,9 +2154,12 @@ function mergeLoadedData(loaded) {
     Object.assign(DB.prices, loaded.prices);
   }
   if (loaded.customerHistory) DB.customerHistory = loaded.customerHistory;
+  if (Array.isArray(loaded.deletedSeedIds)) DB.deletedSeedIds = loaded.deletedSeedIds;
 
-  // Re-run seed (only adds missing seed records, never overwrites)
+  // Re-run seed (only adds missing seed records, never overwrites, respects user deletions)
+  const _deletedSet = new Set(DB.deletedSeedIds || []);
   seedFinance.forEach(r => {
+    if (_deletedSet.has(r.id)) return; // user deliberately deleted this — never re-add
     if (!DB.finance.find(f => f.id === r.id)) DB.finance.push(r);
     if (!DB.customerHistory[r.customer]) DB.customerHistory[r.customer] = { lastService:'wash_only', lastDate: r.date };
   });
@@ -3305,12 +3328,20 @@ function deleteInvoice(id) {
 
   // 2. Remove linked finance record (prefer invoiceId, fallback to exact customer+amount+collectionDate)
   const finBefore = DB.finance.length;
+  const _removedFin = [];
   DB.finance = DB.finance.filter(r => {
-    if (r.invoiceId && r.invoiceId === id) return false;
-    if (!r.invoiceId && r.customer === inv.customerName && r.amount === inv.total) return false;
-    return true;
+    const shouldRemove = (r.invoiceId && r.invoiceId === id) ||
+                         (!r.invoiceId && r.customer === inv.customerName && r.amount === inv.total);
+    if (shouldRemove) _removedFin.push(r);
+    return !shouldRemove;
   });
-  const finRemoved = finBefore - DB.finance.length;
+  // Track deleted seed IDs so re-seeding never resurrects them
+  if (!DB.deletedSeedIds) DB.deletedSeedIds = [];
+  _removedFin.forEach(r => {
+    if (r.id && r.id.startsWith('fin_seed_') && !DB.deletedSeedIds.includes(r.id))
+      DB.deletedSeedIds.push(r.id);
+  });
+  const finRemoved = _removedFin.length;
 
   // 3. Remove linked delivery record (prefer invoiceId, fallback to customer+collectionDate)
   const delBefore = DB.deliveries.length;
@@ -3322,7 +3353,7 @@ function deleteInvoice(id) {
   const delRemoved = delBefore - DB.deliveries.length;
 
   renderAll();
-  saveData();
+  saveData(true); // immediate — critical delete action
   const summary = [`Invoice deleted`];
   if (finRemoved > 0) summary.push(`${finRemoved} finance record${finRemoved>1?'s':''} removed`);
   if (delRemoved > 0) summary.push(`${delRemoved} delivery entry removed`);
@@ -3544,6 +3575,12 @@ function finDeleteSelected() {
   const n = _finSelectedIds.size;
   if (n === 0) { showToast('No records selected.', true); return; }
   if (!confirm('Delete ' + n + ' selected record' + (n !== 1 ? 's' : '') + '? This cannot be undone.')) return;
+  // Track deleted seed IDs before removing
+  if (!DB.deletedSeedIds) DB.deletedSeedIds = [];
+  _finSelectedIds.forEach(rid => {
+    if (rid && rid.startsWith('fin_seed_') && !DB.deletedSeedIds.includes(rid))
+      DB.deletedSeedIds.push(rid);
+  });
   DB.finance = DB.finance.filter(r => !_finSelectedIds.has(r.id));
   _finSelectedIds.clear();
   _finCurrentPage = 1;
@@ -4003,6 +4040,11 @@ function deleteFinRecord(recId) {
   if (!rec) { showToast('Record not found.', true); return; }
   if (!confirm('Delete this record?')) return;
   DB.finance = DB.finance.filter(r => r.id !== recId);
+  // If this is a seed record, track its ID so re-seeding never brings it back
+  if (recId && recId.startsWith('fin_seed_')) {
+    if (!DB.deletedSeedIds) DB.deletedSeedIds = [];
+    if (!DB.deletedSeedIds.includes(recId)) DB.deletedSeedIds.push(recId);
+  }
   renderFinance();
   saveData(true);
   logActivity('Delete Finance Record', `Deleted: ${rec.customer} — ${rec.amount.toLocaleString()} FCFA (${rec.month})`);
@@ -4288,7 +4330,7 @@ function markDelivered(id) {
   d.status = 'delivered';
   d.deliveredDate = new Date().toISOString().split('T')[0];
   renderDeliveries();
-  saveData();
+  saveData(true);
   addNotification(`${d.customer}'s laundry marked as delivered ✓`, 'success');
   showToast(`${d.customer}'s laundry delivered ✓`);
   logActivity('Delivery', `Marked ${d.customer}'s laundry as delivered`);
@@ -4411,7 +4453,7 @@ function deleteMaterial(i) {
   const mat = DB.materials[i];
   DB.materials.splice(i, 1);
   renderMaterials();
-  saveData();
+  saveData(true);
   logActivity('Delete Material', `Deleted material: ${mat ? mat.name : 'unknown'}`);
 }
 
@@ -4463,7 +4505,7 @@ function doneReminder(idx) {
   const rem = DB.reminders[idx];
   DB.reminders[idx].done = true;
   renderReminders();
-  saveData();
+  saveData(true);
   showToast('Marked as done ✓');
   logActivity('Complete Reminder', `Marked reminder done: "${rem ? rem.title : 'unknown'}"`);
 }
@@ -4471,7 +4513,7 @@ function deleteReminder(idx) {
   const rem = DB.reminders[idx];
   DB.reminders.splice(idx, 1);
   renderReminders();
-  saveData();
+  saveData(true);
   logActivity('Delete Reminder', `Deleted reminder: "${rem ? rem.title : 'unknown'}"`);
 }
 
@@ -4511,7 +4553,7 @@ function deleteExpense(i) {
   const exp = DB.expenses[i];
   DB.expenses.splice(i, 1);
   renderExpenses();
-  saveData();
+  saveData(true);
   if (currentAccountType === 'admin') logAdminActivity('Delete Expense', `Deleted expense: ${exp ? exp.item + ' — ' + exp.amount.toLocaleString() + ' FCFA' : 'unknown'}`);
 }
 
@@ -5241,7 +5283,9 @@ function renameCustomer() {
   }
   document.getElementById('rename-customer-old').value = '';
   document.getElementById('rename-customer-new').value = '';
+  logActivity('Rename Customer', `"${oldName}" → "${newName}" (${count} records)`);
   renderAll();
+  saveData(true); // immediate — affects many records across all collections
   showToast(`"${oldName}" renamed to "${newName}" — ${count} records updated ✓`);
 }
 
@@ -5253,7 +5297,7 @@ function saveSettings() {
   const bagDefaultEl = document.getElementById('set-default-bag');
   if (bagDefaultEl) DB.settings.defaultBagIncluded = bagDefaultEl.value === '1';
   logActivity('Settings', 'Updated delivery/bag settings');
-  saveData();
+  saveData(true);
   showToast('Settings saved ✓');
 }
 
@@ -5645,7 +5689,7 @@ function openNotifications() {
   openModal('notif-modal');
 }
 
-function clearNotifications() { DB.notifications = []; updateNotifBadge(); closeModal('notif-modal'); }
+function clearNotifications() { DB.notifications = []; updateNotifBadge(); closeModal('notif-modal'); saveData(); }
 
 function checkRemindersAndAlerts() {
   const now = new Date();
@@ -7659,7 +7703,9 @@ function _loadSeedData() {
   {id:'fin_seed_937',customer:"Mrs Lah",month:'February',amount:43650,paidAmount:0,status:'unpaid',paymentMethod:"-",date:'2025-02-01'},
   {id:'fin_seed_938',customer:"Mme Bruno",month:'February',amount:24200,paidAmount:24200,status:'paid',paymentMethod:"Mobile Money",date:'2025-02-01'}
 ];
+  const _ds2 = new Set(DB.deletedSeedIds || []);
   seedFinance.forEach(r => {
+    if (_ds2.has(r.id)) return; // user deliberately deleted this seed record — skip
     if (!DB.finance.find(f => f.id === r.id)) DB.finance.push(r);
     if (!DB.customerHistory[r.customer]) DB.customerHistory[r.customer] = { lastService:'wash_only', lastDate: r.date };
   });
@@ -7758,7 +7804,15 @@ document.addEventListener('DOMContentLoaded', () => {
       window.addEventListener('storage', function(e) {
         if (e.key === PRESENCE_KEY) _refreshLocalBadge();
       });
-      window.addEventListener('beforeunload', _removeLocalPresence);
+      window.addEventListener('beforeunload', function(e) {
+      // Save data synchronously before the page closes/refreshes
+      // This is the critical guard against data loss on refresh
+      try {
+        const saveObj = Object.assign({}, window.DB || {}, { _appVersion: '7.0', _savedAt: new Date().toISOString() });
+        localStorage.setItem('washnfold_db', JSON.stringify(saveObj));
+      } catch(_) {}
+      _removeLocalPresence();
+    });
     }
   };
 
