@@ -6,32 +6,88 @@
 <title>Washn' Fold — Management System V3</title>
 
 <!-- Fonts: try Google Fonts first, fall back to system fonts gracefully on blocked networks -->
-<link href="https://fonts.googleapis.com/css2?family=Playfair+Display:wght@700;900&family=DM+Mono:wght@400;500&family=DM+Sans:wght@300;400;500;600&display=swap" rel="stylesheet" onerror="document.head.querySelector('#font-fallback').removeAttribute('data-disabled')">
-<style id="font-fallback" data-disabled>
-  /* Fallback fonts for MTN/blocked networks where Google Fonts fails to load */
-  body { font-family: 'Segoe UI', 'Helvetica Neue', Arial, sans-serif !important; }
+<!-- Fonts loaded non-blocking — page renders instantly even if fonts.googleapis.com
+     is blocked (MTN Cameroon etc). System fonts show immediately, custom fonts
+     load asynchronously if available, with no layout shift. -->
+<link rel="preconnect" href="https://fonts.googleapis.com" crossorigin>
+<link rel="preload" as="style"
+  href="https://fonts.googleapis.com/css2?family=Playfair+Display:wght@700;900&family=DM+Mono:wght@400;500&family=DM+Sans:wght@300;400;500;600&display=swap"
+  onload="this.rel='stylesheet'"
+  onerror="this.remove()">
+<!-- App requires JavaScript -->
+<style>
+  /* System font fallbacks — shown immediately while custom fonts load, or permanently
+     on blocked networks. The app is fully usable with these fonts. */
+  body {
+    font-family: 'DM Sans', 'Segoe UI', 'Helvetica Neue', Arial, sans-serif;
+  }
   .app-header h1, .login-box h1, .section-title, .modal-box h3,
-  #welcome-message-display { font-family: Georgia, 'Times New Roman', serif !important; }
-  .card-title, .form-group label, .stat-card .label,
-  .badge, .header-badge { font-family: 'Courier New', Courier, monospace !important; }
+  #welcome-message-display, .stat-card .value {
+    font-family: 'Playfair Display', Georgia, 'Times New Roman', serif;
+  }
+  .card-title, .form-group label, .stat-card .label, .badge,
+  .header-badge, .header-badge *, pre, code, [style*="DM Mono"] {
+    font-family: 'DM Mono', 'Courier New', Courier, monospace;
+  }
 </style>
 
 <!-- jsPDF: try primary CDN, then fallback -->
 <script>
 window._jsPDFLoaded = false;
 </script>
-<script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"
-  onerror="(function(){var s=document.createElement('script');s.src='https://unpkg.com/jspdf@2.5.1/dist/jspdf.umd.min.js';s.onerror=function(){console.warn('jsPDF failed to load on both CDNs');};document.head.appendChild(s);})()">
+<script>
+(function(){
+  function loadScript(url, fallbacks) {
+    var s = document.createElement('script');
+    s.src = url;
+    s.onerror = function() {
+      if (fallbacks && fallbacks.length) loadScript(fallbacks[0], fallbacks.slice(1));
+    };
+    document.head.appendChild(s);
+  }
+  loadScript(
+    'https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js',
+    ['https://cdn.jsdelivr.net/npm/jspdf@2.5.1/dist/jspdf.umd.min.js',
+     'https://unpkg.com/jspdf@2.5.1/dist/jspdf.umd.min.js']
+  );
+})();
 </script>
 
 <!-- XLSX: primary + fallback -->
-<script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"
-  onerror="(function(){var s=document.createElement('script');s.src='https://unpkg.com/xlsx@0.18.5/dist/xlsx.full.min.js';s.onerror=function(){console.warn('XLSX failed to load on both CDNs');};document.head.appendChild(s);})()">
+<script>
+(function(){
+  function loadScript(url, fallbacks) {
+    var s = document.createElement('script');
+    s.src = url;
+    s.onerror = function() {
+      if (fallbacks && fallbacks.length) loadScript(fallbacks[0], fallbacks.slice(1));
+    };
+    document.head.appendChild(s);
+  }
+  loadScript(
+    'https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js',
+    ['https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js',
+     'https://unpkg.com/xlsx@0.18.5/dist/xlsx.full.min.js']
+  );
+})();
 </script>
 
 <!-- EmailJS: primary + fallback -->
-<script src="https://cdn.jsdelivr.net/npm/@emailjs/browser@4/dist/email.min.js"
-  onerror="(function(){var s=document.createElement('script');s.src='https://unpkg.com/@emailjs/browser@4/dist/email.min.js';s.onerror=function(){console.warn('EmailJS unavailable');};document.head.appendChild(s);})()">
+<script>
+(function(){
+  function loadScript(url, fallbacks) {
+    var s = document.createElement('script');
+    s.src = url;
+    s.onerror = function() {
+      if (fallbacks && fallbacks.length) loadScript(fallbacks[0], fallbacks.slice(1));
+    };
+    document.head.appendChild(s);
+  }
+  loadScript(
+    'https://cdn.jsdelivr.net/npm/@emailjs/browser@4/dist/email.min.js',
+    ['https://unpkg.com/@emailjs/browser@4/dist/email.min.js']
+  );
+})();
 </script>
 
 <!-- ═══════════════════════════════════════════════════════════════════
@@ -454,7 +510,7 @@ body.mobile-view .card-title-row { flex-direction: column; align-items: flex-sta
   <div class="login-box">
     <div style="font-family:'DM Mono',monospace;font-size:0.7rem;letter-spacing:0.3em;color:var(--accent);margin-bottom:0.5rem;">✦ WASHN' FOLD</div>
     <h1>Management</h1>
-    <p class="sub">Laundry Service Software v2.0</p>
+    <p class="sub">Laundry Service Software v3.0</p>
     <div id="login-form">
       <div class="form-group" style="margin-bottom:1rem;text-align:left;">
         <label>Username</label>
@@ -1973,10 +2029,16 @@ async function loadCloudDataAndProceed() {
   if (msgEl) msgEl.textContent = 'Connecting to cloud...';
 
   // Wait for Firebase to either connect or time out (max 9s — covers the 8s module timeout)
+  // Wait for Firebase — max 3s on good networks (onerror fires instantly when blocked)
   let waited = 0;
-  while (!window._firebaseReady && waited < 9000) {
+  while (!window._firebaseReady && waited < 3000) {
     await new Promise(r => setTimeout(r, 100));
     waited += 100;
+  }
+  // If still not ready after 3s, force offline mode so login isn't blocked
+  if (!window._firebaseReady) {
+    window._firebaseBlocked = true;
+    window._firebaseReady   = true;
   }
 
   // If Firebase is blocked, skip cloud load and go straight to localStorage
@@ -1992,7 +2054,7 @@ async function loadCloudDataAndProceed() {
     try {
       rawData = await window._fbGetData();
     } catch(e) {
-      console.warn('Cloud load failed:', e.message);
+      /* silent */;
     }
   }
 
@@ -2132,7 +2194,7 @@ function isEmailJSConfigured() {
 function initEmailJS() {
   if (isEmailJSConfigured() && window.emailjs) {
     try { emailjs.init({ publicKey: DB.settings.emailjsPublicKey }); }
-    catch(e) { console.warn('EmailJS init failed:', e); }
+    catch(e) { /* silent */; }
   }
 }
 
@@ -2161,9 +2223,9 @@ function autoDownloadBackup() {
     document.body.appendChild(a);
     a.click();
     setTimeout(() => { try { document.body.removeChild(a); URL.revokeObjectURL(a.href); } catch(e){} }, 3000);
-    console.log('✅ Auto-backup downloaded:', filename);
+    /* silent */;
     return filename;
-  } catch(e) { console.warn('Auto-download failed:', e); return null; }
+  } catch(e) { /* silent */; return null; }
 }
 
 // ── Build email summary payload ─────────────────────────────────────
@@ -2211,10 +2273,10 @@ async function sendLogViaEmailJS(label) {
     await emailjs.send(DB.settings.emailjsServiceId, DB.settings.emailjsTemplateId, payload);
     DB.settings.lastLogSentAt = new Date().toISOString();
     saveData();
-    console.log('EmailJS log sent successfully');
+    /* silent */;
     return true;
   } catch(e) {
-    console.warn('EmailJS send failed:', e);
+    /* silent */;
     return false;
   }
 }
@@ -2266,7 +2328,7 @@ function maybeSendFallbackLog() {
     DB.settings.lastLogSentAt = new Date().toISOString();
     saveData();
     showToast('Backup downloaded' + (filename ? ': ' + filename : '') + ' - email draft opened');
-  } catch(e) { console.warn('Fallback log send failed:', e); }
+  } catch(e) { /* silent */; }
 }
 
 // ── Test from Super User panel ──────────────────────────────────────
@@ -2478,7 +2540,7 @@ function initApp() {
           ind.style.opacity = '1';
           setTimeout(() => { ind.style.opacity = '0'; ind.textContent = '✓ Saved'; ind.style.color = 'var(--success)'; }, 2500);
         }
-      } catch(e) { console.warn('Remote sync merge error:', e); }
+      } catch(e) { /* silent */; }
     });
   }
 }
@@ -5931,7 +5993,7 @@ function saveData(immediate) {
   try {
     const saveObjLocal = { ...DB, _appVersion: '7.0', _savedAt: new Date().toISOString() };
     localStorage.setItem('washnfold_db', JSON.stringify(saveObjLocal));
-  } catch(e) { console.warn('LocalStorage save failed:', e); }
+  } catch(e) { /* silent */; }
 
   // For Firebase: immediate save for critical ops, debounced for minor ones
   if (immediate) {
