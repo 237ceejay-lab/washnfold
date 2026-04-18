@@ -289,7 +289,10 @@ body.logged-in { background-image: radial-gradient(ellipse 80% 50% at 50% -10%, 
 .welcome-msg { background:rgba(232,197,71,0.08); border:1px solid rgba(232,197,71,0.3); border-radius:10px; padding:1rem; margin-bottom:1.5rem; color:var(--accent); font-family:'Playfair Display',serif; font-size:1rem; display:none; }
 
 /* ─── MAIN LAYOUT ─── */
-/* #app display managed by .screen-hidden class */
+/* #app is ONLY rendered when body has .logged-in class.
+   This prevents any flash of app content on page load/after logout. */
+body:not(.logged-in) #app { display: none !important; }
+/* #app display also managed by .screen-hidden class */
 .app-header { background:var(--surface); border-bottom:1px solid var(--border); padding:0.75rem 1.5rem; display:flex; align-items:center; justify-content:space-between; position:sticky; top:0; z-index:100; }
 .app-header h1 { font-family:'Playfair Display',serif; font-size:1.5rem; font-weight:900; background:linear-gradient(135deg,#e8c547,#f4e17a); -webkit-background-clip:text; -webkit-text-fill-color:transparent; background-clip:text; }
 .header-actions { display:flex; align-items:center; gap:0.8rem; }
@@ -2519,12 +2522,12 @@ function doLogout() {
   currentAdminAccountId = null;
   _lastRemoteUpdate = null;
 
-  // Show the logout screen briefly, then hard-reload the page.
-  // A full page reload is the most secure logout: it completely wipes the DOM,
-  // all JS variables, all in-memory data, and all rendered app content.
-  // The login screen will be shown on the fresh page load (no sessionStorage = no restore).
-  showScreen('logout-screen');
-  setTimeout(function() { location.reload(); }, 2200);
+  // Write a logout flag so the reloaded page shows login screen immediately
+  try { sessionStorage.setItem('washnfold_just_logged_out', '1'); } catch(e) {}
+
+  // Hard reload — completely wipes DOM, JS state, all in-memory data.
+  // The reloaded page will see the logout flag and show login screen.
+  location.reload();
 }
 
 let _reminderIntervalId = null;
@@ -7755,6 +7758,18 @@ document.addEventListener('DOMContentLoaded', () => {
       }
     });
   }
+
+  // ── Logout detection: if just logged out, show clean login screen ──────
+  try {
+    if (sessionStorage.getItem('washnfold_just_logged_out') === '1') {
+      sessionStorage.removeItem('washnfold_just_logged_out');
+      sessionStorage.removeItem('washnfold_session');
+      // Show the logout confirmation screen briefly, then switch to login
+      showScreen('logout-screen');
+      setTimeout(function() { showScreen('login-screen'); }, 1800);
+      return; // stop — do not attempt session restore
+    }
+  } catch(e) {}
 
   // ── Session restore: re-login automatically on page refresh ──────
   try {
