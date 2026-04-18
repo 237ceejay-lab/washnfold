@@ -1960,6 +1960,14 @@ function doLogin() {
     errEl.style.display = 'none';
     _loadSeedData();
     logActivity('Login', `Logged in as ${currentAccountType}`);
+    // Persist session so refresh doesn't log out
+    try {
+      sessionStorage.setItem('washnfold_session', JSON.stringify({
+        accountType: currentAccountType,
+        username: currentAccountUsername,
+        adminAccountId: currentAdminAccountId
+      }));
+    } catch(e) {}
     document.getElementById('login-form').style.display = 'none';
     document.getElementById('login-import-prompt').style.display = 'block';
     loadCloudDataAndProceed();
@@ -2432,11 +2440,16 @@ function doLogout() {
   if (window._fbStopPresenceHeartbeat) {
     window._fbStopPresenceHeartbeat(); // async fire-and-forget
   }
+  if (window._stopLocalPresence) {
+    window._stopLocalPresence();
+  }
 
   // Unsubscribe from realtime listeners
   if (_presenceUnsubscribe) { try { _presenceUnsubscribe(); } catch(e){} _presenceUnsubscribe = null; }
   if (_dataUnsubscribe) { try { _dataUnsubscribe(); } catch(e){} _dataUnsubscribe = null; }
 
+  // Clear persisted session on logout
+  try { sessionStorage.removeItem('washnfold_session'); } catch(e) {}
   document.body.classList.remove('logged-in');
   document.body.classList.remove('mobile-view');
   document.getElementById('login-pass').value = '';
@@ -2521,6 +2534,10 @@ function initApp() {
   _updatePresenceBadge([]); // show "1 online" (yourself) immediately on login
   if (window._fbStartPresenceHeartbeat) {
     window._fbStartPresenceHeartbeat(currentAccountUsername, currentAccountType);
+  }
+  // Also always run local presence tracking (works even when Firebase is blocked)
+  if (window._startLocalPresence) {
+    window._startLocalPresence();
   }
 
   // ── Listen for other users coming online/going offline ──
@@ -7639,7 +7656,86 @@ document.addEventListener('DOMContentLoaded', () => {
       }
     });
   }
+
+  // ── Session restore: re-login automatically on page refresh ──────
+  try {
+    const saved = sessionStorage.getItem('washnfold_session');
+    if (saved) {
+      const sess = JSON.parse(saved);
+      if (sess && sess.accountType && sess.username) {
+        currentAccountType    = sess.accountType;
+        currentAccountUsername = sess.username;
+        currentAdminAccountId  = sess.adminAccountId || null;
+        _loadSeedData();
+        loadCloudDataAndProceed();
+      }
+    }
+  } catch(e) {}
 });
+
+// ── Local-mode presence tracking (works even when Firebase is blocked) ──
+// Uses localStorage + BroadcastChannel so multiple tabs show correct count
+(function() {
+  const PRESENCE_KEY = 'washnfold_presence_local';
+  const MY_TAB_ID   = 'tab_' + Date.now() + '_' + Math.random().toString(36).slice(2,6);
+  let _localHb = null;
+
+  function _writeLocalPresence() {
+    if (!currentAccountUsername) return;
+    try {
+      const all = JSON.parse(localStorage.getItem(PRESENCE_KEY) || '{}');
+      all[MY_TAB_ID] = {
+        username:    currentAccountUsername,
+        accountType: currentAccountType,
+        lastSeen:    Date.now()
+      };
+      localStorage.setItem(PRESENCE_KEY, JSON.stringify(all));
+    } catch(e) {}
+    _refreshLocalBadge();
+  }
+
+  function _removeLocalPresence() {
+    try {
+      const all = JSON.parse(localStorage.getItem(PRESENCE_KEY) || '{}');
+      delete all[MY_TAB_ID];
+      localStorage.setItem(PRESENCE_KEY, JSON.stringify(all));
+    } catch(e) {}
+  }
+
+  function _refreshLocalBadge() {
+    try {
+      const STALE = 70000; // 70 s — two missed heartbeats
+      const now   = Date.now();
+      const all   = JSON.parse(localStorage.getItem(PRESENCE_KEY) || '{}');
+      const active = Object.entries(all).filter(([id, s]) => now - s.lastSeen < STALE);
+
+      // Prune stale entries
+      const pruned = {};
+      active.forEach(([id, s]) => { pruned[id] = s; });
+      localStorage.setItem(PRESENCE_KEY, JSON.stringify(pruned));
+
+      const others = active.filter(([id]) => id !== MY_TAB_ID).map(([,s]) => s);
+      _updatePresenceBadge(others);
+    } catch(e) {}
+  }
+
+  // Expose helpers so initApp can start/stop local tracking
+  window._startLocalPresence = function() {
+    _writeLocalPresence();
+    if (_localHb) clearInterval(_localHb);
+    _localHb = setInterval(_writeLocalPresence, 30000);
+    // Listen for changes from other tabs
+    window.addEventListener('storage', function(e) {
+      if (e.key === PRESENCE_KEY) _refreshLocalBadge();
+    });
+    window.addEventListener('beforeunload', _removeLocalPresence);
+  };
+
+  window._stopLocalPresence = function() {
+    if (_localHb) { clearInterval(_localHb); _localHb = null; }
+    _removeLocalPresence();
+  };
+})();
 </script>
 </body>
 </html>
