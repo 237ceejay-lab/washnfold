@@ -500,6 +500,85 @@ body.mobile-view .card-title-row { flex-direction: column; align-items: flex-sta
 .activity-item { padding:0.6rem 0; border-bottom:1px solid var(--border); font-size:0.82rem; }
 .activity-item .act-time { font-size:0.7rem; color:var(--muted); font-family:'DM Mono',monospace; }
 </style>
+<!-- PWA: Makes app installable as desktop/phone app (no extra files needed) -->
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="Washn Fold">
+<meta name="application-name" content="Washn Fold">
+<meta name="theme-color" content="#0d1117">
+<link rel="apple-touch-icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 192 192'%3E%3Crect width='192' height='192' rx='32' fill='%230d1117'/%3E%3Ctext x='96' y='130' text-anchor='middle' font-size='110' font-family='serif'%3E%F0%9F%AB%A7%3C/text%3E%3C/svg%3E">
+
+<!-- Inline Web App Manifest via data URI — no separate manifest.json file needed -->
+<link rel="manifest" href="data:application/manifest+json,%7B%22name%22%3A%22Washn%27+Fold+Management%22%2C%22short_name%22%3A%22Washn+Fold%22%2C%22description%22%3A%22Washn%27+Fold+Laundry+Service+Management+System%22%2C%22start_url%22%3A%22.%2F%22%2C%22display%22%3A%22standalone%22%2C%22background_color%22%3A%22%230d1117%22%2C%22theme_color%22%3A%22%230d1117%22%2C%22orientation%22%3A%22any%22%2C%22icons%22%3A%5B%7B%22src%22%3A%22data%3Aimage%2Fsvg%2Bxml%2C%253Csvg+xmlns%3D%27http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%27+viewBox%3D%270+0+192+192%27%253E%253Crect+width%3D%27192%27+height%3D%27192%27+rx%3D%2732%27+fill%3D%27%25230d1117%27%2F%253E%253Ctext+x%3D%2796%27+y%3D%27130%27+text-anchor%3D%27middle%27+font-size%3D%27110%27%253E%25F0%259F%25AB%25A7%253C%2Ftext%253E%253C%2Fsvg%253E%22%2C%22sizes%22%3A%22192x192%22%2C%22type%22%3A%22image%2Fsvg%2Bxml%22%7D%5D%7D">
+
+<script>
+// Register a minimal service worker via Blob URL — enables PWA install prompt.
+// The SW just caches the page for offline use (data already in localStorage).
+if ('serviceWorker' in navigator) {
+  var swCode = [
+    'var CACHE = "washnfold-v3";',
+    'self.addEventListener("install", function(e) {',
+    '  e.waitUntil(caches.open(CACHE).then(function(c) {',
+    '    return c.addAll(["./"]);',
+    '  }).then(function() { return self.skipWaiting(); }));',
+    '});',
+    'self.addEventListener("activate", function(e) {',
+    '  e.waitUntil(caches.keys().then(function(keys) {',
+    '    return Promise.all(keys.filter(function(k){return k!==CACHE;}).map(function(k){return caches.delete(k);}));',
+    '  }).then(function() { return self.clients.claim(); }));',
+    '});',
+    'self.addEventListener("fetch", function(e) {',
+    '  if (e.request.method !== "GET") return;',
+    '  e.respondWith(caches.match(e.request).then(function(cached) {',
+    '    var networkFetch = fetch(e.request).then(function(response) {',
+    '      if (response && response.status === 200) {',
+    '        var clone = response.clone();',
+    '        caches.open(CACHE).then(function(c) { c.put(e.request, clone); });',
+    '      }',
+    '      return response;',
+    '    }).catch(function() { return cached; });',
+    '    return cached || networkFetch;',
+    '  }));',
+    '});'
+  ].join("\n");
+  var swBlob = new Blob([swCode], { type: 'application/javascript' });
+  var swUrl  = URL.createObjectURL(swBlob);
+  navigator.serviceWorker.register(swUrl, { scope: './' }).then(function(reg) {
+    // Service worker registered — app is now installable
+  }).catch(function() {
+    // SW registration failed — app still works normally
+  });
+}
+
+// Show install prompt when browser offers it
+var _pwaInstallPrompt = null;
+window.addEventListener('beforeinstallprompt', function(e) {
+  e.preventDefault();
+  _pwaInstallPrompt = e;
+  // Show install button in header once app is loaded
+  setTimeout(function() {
+    var btn = document.getElementById('pwa-install-btn');
+    if (btn) btn.style.display = '';
+  }, 2000);
+});
+window.addEventListener('appinstalled', function() {
+  var btn = document.getElementById('pwa-install-btn');
+  if (btn) btn.style.display = 'none';
+  _pwaInstallPrompt = null;
+});
+function installPWA() {
+  if (!_pwaInstallPrompt) return;
+  _pwaInstallPrompt.prompt();
+  _pwaInstallPrompt.userChoice.then(function(result) {
+    if (result.outcome === 'accepted') {
+      var btn = document.getElementById('pwa-install-btn');
+      if (btn) btn.style.display = 'none';
+    }
+    _pwaInstallPrompt = null;
+  });
+}
+</script>
 </head>
 <body>
 
@@ -565,6 +644,7 @@ body.mobile-view .card-title-row { flex-direction: column; align-items: flex-sta
         🔔<span class="notif-badge" id="notif-count">0</span>
       </div>
       <span id="autosave-indicator" style="font-family:'DM Mono',monospace;font-size:0.68rem;color:var(--success);opacity:0;transition:opacity 1.2s;">✓ Saved</span>
+      <button id="pwa-install-btn" onclick="installPWA()" title="Install as desktop or phone app" style="display:none;background:rgba(162,155,254,0.12);border:1px solid rgba(162,155,254,0.4);border-radius:20px;padding:0.3rem 0.8rem;font-size:0.72rem;color:var(--purple);cursor:pointer;font-family:'DM Mono',monospace;transition:all 0.2s;" onmouseover="this.style.background='rgba(162,155,254,0.22)'" onmouseout="this.style.background='rgba(162,155,254,0.12)'">⬇ Install App</button>
       <span id="online-users-badge" title="Users currently logged in" style="display:none;background:rgba(81,207,102,0.1);border:1px solid rgba(81,207,102,0.3);border-radius:20px;padding:0.25rem 0.6rem;font-size:0.68rem;color:var(--success);font-family:'DM Mono',monospace;cursor:default;">🟢 1 online</span>
       <button class="btn btn-sm btn-danger" onclick="confirmLogout()" id="logout-btn">🔒 Logout</button>
     </div>
@@ -2462,6 +2542,36 @@ let _presenceUnsubscribe = null;
 let _dataUnsubscribe = null;
 let _lastRemoteUpdate = null;
 
+// ── Presence badge updater — always shows, even with 0 other users ───────────
+function _updatePresenceBadge(otherSessions) {
+  const badge = document.getElementById('online-users-badge');
+  if (!badge) return;
+  const others = (otherSessions || []).length;
+  const total  = others + 1; // +1 = yourself
+
+  // Always visible once logged in
+  badge.style.display = '';
+
+  if (others === 0) {
+    // Only you online
+    badge.textContent = '🟢 1 online (you)';
+    badge.title = 'You are the only one logged in right now';
+    badge.style.background  = 'rgba(81,207,102,0.1)';
+    badge.style.borderColor = 'rgba(81,207,102,0.3)';
+    badge.style.color       = 'var(--success)';
+  } else {
+    // You + others
+    const names = otherSessions.map(function(s) {
+      return s.username + ' (' + (s.accountType || 'user') + ')';
+    }).join(', ');
+    badge.textContent = '🟢 ' + total + ' online';
+    badge.title       = 'Also online: ' + names + ' (You are also counted)';
+    badge.style.background  = 'rgba(78,205,196,0.12)';
+    badge.style.borderColor = 'rgba(78,205,196,0.4)';
+    badge.style.color       = 'var(--accent2)';
+  }
+}
+
 function initApp() {
   const today = new Date().toISOString().split('T')[0];
   document.getElementById('inv-collection-date').value = '';
@@ -2487,6 +2597,7 @@ function initApp() {
   }
 
   // ── Multi-user presence: register this session online ──
+  _updatePresenceBadge([]); // show "1 online" (yourself) immediately on login
   if (window._fbStartPresenceHeartbeat) {
     window._fbStartPresenceHeartbeat(currentAccountUsername, currentAccountType);
   }
@@ -2495,17 +2606,7 @@ function initApp() {
   if (window._fbListenPresence) {
     if (_presenceUnsubscribe) _presenceUnsubscribe();
     _presenceUnsubscribe = window._fbListenPresence(function(otherSessions) {
-      const badge = document.getElementById('online-users-badge');
-      if (!badge) return;
-      const count = otherSessions.length;
-      if (count === 0) {
-        badge.style.display = 'none';
-      } else {
-        badge.style.display = '';
-        const names = otherSessions.map(s => s.username + ' (' + s.accountType + ')').join(', ');
-        badge.textContent = '🟢 ' + count + ' other' + (count > 1 ? 's' : '') + ' online';
-        badge.title = 'Also online: ' + names;
-      }
+      _updatePresenceBadge(otherSessions);
     });
   }
 
@@ -3817,7 +3918,14 @@ function generateCustomerStatement() {
   }
 
   const safeName = custName.replace(/[^a-zA-Z0-9 '_-]/g,'').trim();
-  doc.save(safeName+' - Statement.pdf');
+  const _now = new Date();
+  const _dd  = String(_now.getDate()).padStart(2,'0');
+  const _mon = _now.toLocaleString('en',{month:'short'});
+  const _yr  = _now.getFullYear();
+  const _hh  = String(_now.getHours()).padStart(2,'0');
+  const _mm  = String(_now.getMinutes()).padStart(2,'0');
+  const _stmtFilename = safeName + ' - Statement ' + _dd + '-' + _mon + '-' + _yr + ' ' + _hh + '-' + _mm + '.pdf';
+  doc.save(_stmtFilename);
   showToast('Statement PDF downloaded \u2713');
 }
 
