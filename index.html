@@ -513,50 +513,12 @@ body.mobile-view .card-title-row { flex-direction: column; align-items: flex-sta
 <link rel="manifest" href="data:application/manifest+json,%7B%22name%22%3A%22Washn%27+Fold+Management%22%2C%22short_name%22%3A%22Washn+Fold%22%2C%22description%22%3A%22Washn%27+Fold+Laundry+Service+Management+System%22%2C%22start_url%22%3A%22.%2F%22%2C%22display%22%3A%22standalone%22%2C%22background_color%22%3A%22%230d1117%22%2C%22theme_color%22%3A%22%230d1117%22%2C%22orientation%22%3A%22any%22%2C%22icons%22%3A%5B%7B%22src%22%3A%22data%3Aimage%2Fsvg%2Bxml%2C%253Csvg+xmlns%3D%27http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%27+viewBox%3D%270+0+192+192%27%253E%253Crect+width%3D%27192%27+height%3D%27192%27+rx%3D%2732%27+fill%3D%27%25230d1117%27%2F%253E%253Ctext+x%3D%2796%27+y%3D%27130%27+text-anchor%3D%27middle%27+font-size%3D%27110%27%253E%25F0%259F%25AB%25A7%253C%2Ftext%253E%253C%2Fsvg%253E%22%2C%22sizes%22%3A%22192x192%22%2C%22type%22%3A%22image%2Fsvg%2Bxml%22%7D%5D%7D">
 
 <script>
-// Register a minimal service worker via Blob URL — enables PWA install prompt.
-// The SW just caches the page for offline use (data already in localStorage).
-if ('serviceWorker' in navigator) {
-  var swCode = [
-    'var CACHE = "washnfold-v3";',
-    'self.addEventListener("install", function(e) {',
-    '  e.waitUntil(caches.open(CACHE).then(function(c) {',
-    '    return c.addAll(["./"]);',
-    '  }).then(function() { return self.skipWaiting(); }));',
-    '});',
-    'self.addEventListener("activate", function(e) {',
-    '  e.waitUntil(caches.keys().then(function(keys) {',
-    '    return Promise.all(keys.filter(function(k){return k!==CACHE;}).map(function(k){return caches.delete(k);}));',
-    '  }).then(function() { return self.clients.claim(); }));',
-    '});',
-    'self.addEventListener("fetch", function(e) {',
-    '  if (e.request.method !== "GET") return;',
-    '  e.respondWith(caches.match(e.request).then(function(cached) {',
-    '    var networkFetch = fetch(e.request).then(function(response) {',
-    '      if (response && response.status === 200) {',
-    '        var clone = response.clone();',
-    '        caches.open(CACHE).then(function(c) { c.put(e.request, clone); });',
-    '      }',
-    '      return response;',
-    '    }).catch(function() { return cached; });',
-    '    return cached || networkFetch;',
-    '  }));',
-    '});'
-  ].join("\n");
-  var swBlob = new Blob([swCode], { type: 'application/javascript' });
-  var swUrl  = URL.createObjectURL(swBlob);
-  navigator.serviceWorker.register(swUrl, { scope: './' }).then(function(reg) {
-    // Service worker registered — app is now installable
-  }).catch(function() {
-    // SW registration failed — app still works normally
-  });
-}
-
-// Show install prompt when browser offers it
+// PWA install prompt — no service worker needed (app already works offline via localStorage).
+// A blob: URL service worker is blocked by browsers (wrong origin scope), so we skip it.
 var _pwaInstallPrompt = null;
 window.addEventListener('beforeinstallprompt', function(e) {
   e.preventDefault();
   _pwaInstallPrompt = e;
-  // Show install button in header once app is loaded
   setTimeout(function() {
     var btn = document.getElementById('pwa-install-btn');
     if (btn) btn.style.display = '';
