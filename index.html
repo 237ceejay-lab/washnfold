@@ -535,6 +535,32 @@ body.mobile-view .card-title-row { flex-direction: column; align-items: flex-sta
 </div>
 
 <!-- ════════════════════════════════════════════════════
+     LOGOUT SCREEN (shown after logout, before page reload)
+════════════════════════════════════════════════════ -->
+<div id="logout-screen" class="screen-hidden" style="min-height:100vh;display:flex;align-items:center;justify-content:center;background:radial-gradient(ellipse 80% 80% at 50% 50%, rgba(232,197,71,0.08) 0%, transparent 70%), var(--bg);">
+  <div style="text-align:center;padding:2rem;max-width:420px;">
+    <div style="font-size:3.5rem;margin-bottom:1.5rem;">🔒</div>
+    <div style="font-family:'DM Mono',monospace;font-size:0.7rem;letter-spacing:0.3em;color:var(--accent);margin-bottom:0.8rem;text-transform:uppercase;">✦ WASHN' FOLD</div>
+    <h2 style="font-family:'Playfair Display',serif;font-size:2rem;font-weight:900;background:linear-gradient(135deg,#e8c547,#f4e17a,#c9a227);-webkit-background-clip:text;-webkit-text-fill-color:transparent;background-clip:text;margin-bottom:0.8rem;">Logged Out</h2>
+    <p style="color:var(--muted);font-size:0.88rem;margin-bottom:2rem;line-height:1.6;">You have been securely logged out.<br>Your session has been cleared.</p>
+    <div style="display:flex;gap:0.8rem;justify-content:center;margin-bottom:1.5rem;">
+      <div style="width:8px;height:8px;border-radius:50%;background:var(--accent);animation:logout-dot 1.2s ease-in-out infinite;"></div>
+      <div style="width:8px;height:8px;border-radius:50%;background:var(--accent);animation:logout-dot 1.2s ease-in-out 0.2s infinite;"></div>
+      <div style="width:8px;height:8px;border-radius:50%;background:var(--accent);animation:logout-dot 1.2s ease-in-out 0.4s infinite;"></div>
+    </div>
+    <p style="color:var(--muted);font-size:0.75rem;font-family:'DM Mono',monospace;">Redirecting to login...</p>
+    <button class="btn btn-primary" style="margin-top:1.5rem;width:100%;justify-content:center;" onclick="location.reload()">🔐 Back to Login</button>
+  </div>
+</div>
+<style>
+@keyframes logout-dot {
+  0%, 100% { opacity: 0.2; transform: scale(0.8); }
+  50% { opacity: 1; transform: scale(1.2); }
+}
+</style>
+
+
+<!-- ════════════════════════════════════════════════════
      WELCOME SCREEN (shown after login, before app)
 ════════════════════════════════════════════════════ -->
 <div id="welcome-screen" class="screen-hidden" style="min-height:100vh;display:flex;align-items:center;justify-content:center;background:radial-gradient(ellipse 90% 80% at 50% 40%, rgba(232,197,71,0.18) 0%, transparent 70%), var(--bg);">
@@ -1982,7 +2008,7 @@ function doLogin() {
 
 // ── Screen management ──────────────────────────────────────────────
 function showScreen(id) {
-  ['login-screen','welcome-screen','app'].forEach(s => {
+  ['login-screen','logout-screen','welcome-screen','app'].forEach(s => {
     const el = document.getElementById(s);
     if (el) el.classList.add('screen-hidden');
   });
@@ -2492,7 +2518,13 @@ function doLogout() {
   currentAccountUsername = '';
   currentAdminAccountId = null;
   _lastRemoteUpdate = null;
-  showScreen('login-screen');
+
+  // Show the logout screen briefly, then hard-reload the page.
+  // A full page reload is the most secure logout: it completely wipes the DOM,
+  // all JS variables, all in-memory data, and all rendered app content.
+  // The login screen will be shown on the fresh page load (no sessionStorage = no restore).
+  showScreen('logout-screen');
+  setTimeout(function() { location.reload(); }, 2200);
 }
 
 let _reminderIntervalId = null;
