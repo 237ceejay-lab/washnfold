@@ -165,8 +165,9 @@ window._initFirebase = function() {
     window._fbStartPresenceHeartbeat = function(u, t) {
       if (_hb) clearInterval(_hb);
       window._fbRegisterPresence(u, t);
-      _hb = setInterval(function() { window._fbRegisterPresence(u, t); }, 30000);
-      window._fbCleanStaleSessions();
+      _hb = setInterval(function() { window._fbRegisterPresence(u, t); }, 15000);
+      // Delay stale cleanup so we don't race against other devices just logging in
+      setTimeout(function() { window._fbCleanStaleSessions(); }, 60000);
     };
 
     window._fbStopPresenceHeartbeat = async function() {
@@ -177,7 +178,7 @@ window._initFirebase = function() {
     window._fbCleanStaleSessions = async function() {
       try {
         var snap = await db.collection('washnfold_presence').get();
-        var cutoff = new Date(Date.now() - 120000).toISOString();
+        var cutoff = new Date(Date.now() - 180000).toISOString();
         snap.forEach(function(d) {
           if ((d.data().lastSeen || '') < cutoff) {
             db.collection('washnfold_presence').doc(d.id).delete().catch(function(){});
@@ -189,7 +190,7 @@ window._initFirebase = function() {
     window._fbListenPresence = function(cb) {
       try {
         return db.collection('washnfold_presence').onSnapshot(function(snap) {
-          var cutoff = new Date(Date.now() - 120000).toISOString();
+          var cutoff = new Date(Date.now() - 180000).toISOString();
           var sessions = [];
           snap.forEach(function(d) {
             var data = d.data();
@@ -2547,6 +2548,26 @@ function initApp() {
       _updatePresenceBadge(otherSessions);
     });
   }
+
+  // ── Re-register presence when tab regains focus (handles network interruptions) ──
+  document.addEventListener('visibilitychange', function() {
+    if (document.visibilityState === 'visible' && currentAccountUsername) {
+      if (window._fbRegisterPresence) {
+        window._fbRegisterPresence(currentAccountUsername, currentAccountType);
+      }
+      if (window._startLocalPresence) {
+        window._startLocalPresence();
+      }
+    }
+  }, { once: false });
+
+  // ── Poll for local presence changes every 10s (catches cross-tab updates) ──
+  setInterval(function() {
+    if (currentAccountUsername && window._startLocalPresence) {
+      // Re-write own entry and refresh badge
+      window._startLocalPresence();
+    }
+  }, 10000);
 
   // ── Listen for remote data changes (another user saved something) ──
   if (window._fbListenData) {
@@ -7663,10 +7684,16 @@ document.addEventListener('DOMContentLoaded', () => {
     if (saved) {
       const sess = JSON.parse(saved);
       if (sess && sess.accountType && sess.username) {
-        currentAccountType    = sess.accountType;
+        currentAccountType     = sess.accountType;
         currentAccountUsername = sess.username;
         currentAdminAccountId  = sess.adminAccountId || null;
         _loadSeedData();
+        // Must show import-prompt and hide login-form so loadCloudDataAndProceed
+        // can hide/show them correctly at the end (it expects this state)
+        const _lf = document.getElementById('login-form');
+        const _ip = document.getElementById('login-import-prompt');
+        if (_lf) _lf.style.display = 'none';
+        if (_ip) _ip.style.display = 'block';
         loadCloudDataAndProceed();
       }
     }
@@ -7719,16 +7746,20 @@ document.addEventListener('DOMContentLoaded', () => {
     } catch(e) {}
   }
 
+  var _storageListenerAdded = false;
   // Expose helpers so initApp can start/stop local tracking
   window._startLocalPresence = function() {
     _writeLocalPresence();
     if (_localHb) clearInterval(_localHb);
     _localHb = setInterval(_writeLocalPresence, 30000);
-    // Listen for changes from other tabs
-    window.addEventListener('storage', function(e) {
-      if (e.key === PRESENCE_KEY) _refreshLocalBadge();
-    });
-    window.addEventListener('beforeunload', _removeLocalPresence);
+    // Listen for changes from other tabs — only add once
+    if (!_storageListenerAdded) {
+      _storageListenerAdded = true;
+      window.addEventListener('storage', function(e) {
+        if (e.key === PRESENCE_KEY) _refreshLocalBadge();
+      });
+      window.addEventListener('beforeunload', _removeLocalPresence);
+    }
   };
 
   window._stopLocalPresence = function() {
