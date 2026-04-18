@@ -3,49 +3,211 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Washn' Fold — Management System V2</title>
-<link href="https://fonts.googleapis.com/css2?family=Playfair+Display:wght@700;900&family=DM+Mono:wght@400;500&family=DM+Sans:wght@300;400;500;600&display=swap" rel="stylesheet">
-<script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
-<script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
-<script src="https://cdn.jsdelivr.net/npm/@emailjs/browser@4/dist/email.min.js"></script>
+<title>Washn' Fold — Management System V3</title>
 
-<!-- Firebase SDK -->
-<script type="module">
-  import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js";
-  import { getFirestore, doc, getDoc, setDoc } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
+<!-- Fonts: try Google Fonts first, fall back to system fonts gracefully on blocked networks -->
+<link href="https://fonts.googleapis.com/css2?family=Playfair+Display:wght@700;900&family=DM+Mono:wght@400;500&family=DM+Sans:wght@300;400;500;600&display=swap" rel="stylesheet" onerror="document.head.querySelector('#font-fallback').removeAttribute('data-disabled')">
+<style id="font-fallback" data-disabled>
+  /* Fallback fonts for MTN/blocked networks where Google Fonts fails to load */
+  body { font-family: 'Segoe UI', 'Helvetica Neue', Arial, sans-serif !important; }
+  .app-header h1, .login-box h1, .section-title, .modal-box h3,
+  #welcome-message-display { font-family: Georgia, 'Times New Roman', serif !important; }
+  .card-title, .form-group label, .stat-card .label,
+  .badge, .header-badge { font-family: 'Courier New', Courier, monospace !important; }
+</style>
 
-  // ── REPLACE THESE VALUES with your own Firebase project config ──
-  const firebaseConfig = {
-    apiKey:            "AIzaSyD1bJH5TlNqp1XysJlqaiL3u7RCRxjoyrg",
-    authDomain:        "washnfold-422f9.firebaseapp.com",
-    projectId:         "washnfold-422f9",
-    storageBucket:     "washnfold-422f9.firebasestorage.app",
-    messagingSenderId: "771644595694",
-    appId:             "1:771644595694:web:cc94c5f693f09e0a72c2ff"
-  };
+<!-- jsPDF: try primary CDN, then fallback -->
+<script>
+window._jsPDFLoaded = false;
+</script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"
+  onerror="(function(){var s=document.createElement('script');s.src='https://unpkg.com/jspdf@2.5.1/dist/jspdf.umd.min.js';s.onerror=function(){console.warn('jsPDF failed to load on both CDNs');};document.head.appendChild(s);})()">
+</script>
 
-  const app = initializeApp(firebaseConfig);
-  const db  = getFirestore(app);
-  const DOC_REF = doc(db, 'washnfold', 'appdata');
+<!-- XLSX: primary + fallback -->
+<script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"
+  onerror="(function(){var s=document.createElement('script');s.src='https://unpkg.com/xlsx@0.18.5/dist/xlsx.full.min.js';s.onerror=function(){console.warn('XLSX failed to load on both CDNs');};document.head.appendChild(s);})()">
+</script>
 
-  // Expose to global scope so the rest of the app can use them
-  window._fbGetData = async function() {
-    try {
-      const snap = await getDoc(DOC_REF);
-      if (snap.exists()) return snap.data().payload || null;
-      return null;
-    } catch(e) { console.warn('Firebase read error:', e); return null; }
-  };
+<!-- EmailJS: primary + fallback -->
+<script src="https://cdn.jsdelivr.net/npm/@emailjs/browser@4/dist/email.min.js"
+  onerror="(function(){var s=document.createElement('script');s.src='https://unpkg.com/@emailjs/browser@4/dist/email.min.js';s.onerror=function(){console.warn('EmailJS unavailable');};document.head.appendChild(s);})()">
+</script>
 
-  window._fbSetData = async function(jsonStr) {
-    try {
-      await setDoc(DOC_REF, { payload: jsonStr, updatedAt: new Date().toISOString() });
-      return true;
-    } catch(e) { console.warn('Firebase write error:', e); return false; }
-  };
+<!-- ═══════════════════════════════════════════════════════════════════
+     FIREBASE — Silent script-injection loader.
+     Zero console errors on blocked networks (MTN Cameroon etc.).
+     Falls back to localStorage automatically. No type=module anywhere.
+     ═══════════════════════════════════════════════════════════════════ -->
+<script>
+// ── Step 1: Offline-first stubs (always active, upgraded by _initFirebase) ───
+window._firebaseReady    = false;
+window._firebaseBlocked  = false;
+window._sessionId        = 'local_' + Date.now() + '_' + Math.random().toString(36).slice(2,6);
+window._FIREBASE_CONFIG  = {
+  apiKey:            "AIzaSyD1bJH5TlNqp1XysJlqaiL3u7RCRxjoyrg",
+  authDomain:        "washnfold-422f9.firebaseapp.com",
+  projectId:         "washnfold-422f9",
+  storageBucket:     "washnfold-422f9.firebasestorage.app",
+  messagingSenderId: "771644595694",
+  appId:             "1:771644595694:web:cc94c5f693f09e0a72c2ff"
+};
 
-  window._firebaseReady = true;
-  console.log('✅ Firebase connected');
+window._fbGetData = async function() {
+  try { return localStorage.getItem('washnfold_db') || null; } catch(e) { return null; }
+};
+window._fbSetData = async function(j) {
+  try { localStorage.setItem('washnfold_db', j); return true; } catch(e) { return false; }
+};
+window._fbRegisterPresence       = async function(){};
+window._fbStartPresenceHeartbeat = function(){};
+window._fbStopPresenceHeartbeat  = async function(){};
+window._fbCleanStaleSessions     = async function(){};
+window._fbListenPresence         = function(){ return null; };
+window._fbListenData             = function(){ return null; };
+
+// ── Step 2: Real Firebase init using Compat SDK (called after scripts load) ──
+window._initFirebase = function() {
+  try {
+    if (!window.firebase || !window.firebase.firestore) {
+      throw new Error('Firebase compat SDK not ready');
+    }
+    firebase.initializeApp(window._FIREBASE_CONFIG);
+    var db  = firebase.firestore();
+    var SID = 'sess_' + Date.now() + '_' + Math.random().toString(36).slice(2,8);
+    window._sessionId = SID;
+
+    window._fbGetData = async function() {
+      try {
+        var snap = await db.collection('washnfold').doc('appdata').get();
+        return snap.exists ? (snap.data().payload || null) : null;
+      } catch(e) {
+        try { return localStorage.getItem('washnfold_db') || null; } catch(_) { return null; }
+      }
+    };
+
+    window._fbSetData = async function(jsonStr) {
+      try { localStorage.setItem('washnfold_db', jsonStr); } catch(_) {}
+      try {
+        await db.collection('washnfold').doc('appdata').set({
+          payload: jsonStr, updatedAt: new Date().toISOString()
+        });
+        return true;
+      } catch(e) { return false; }
+    };
+
+    window._fbRegisterPresence = async function(u, t) {
+      try {
+        await db.collection('washnfold_presence').doc(SID).set({
+          sessionId: SID, username: u || '?', accountType: t || 'unknown',
+          lastSeen: new Date().toISOString(), online: true
+        });
+      } catch(e) {}
+    };
+
+    var _hb = null;
+    window._fbStartPresenceHeartbeat = function(u, t) {
+      if (_hb) clearInterval(_hb);
+      window._fbRegisterPresence(u, t);
+      _hb = setInterval(function() { window._fbRegisterPresence(u, t); }, 30000);
+      window._fbCleanStaleSessions();
+    };
+
+    window._fbStopPresenceHeartbeat = async function() {
+      if (_hb) { clearInterval(_hb); _hb = null; }
+      try { await db.collection('washnfold_presence').doc(SID).delete(); } catch(e) {}
+    };
+
+    window._fbCleanStaleSessions = async function() {
+      try {
+        var snap = await db.collection('washnfold_presence').get();
+        var cutoff = new Date(Date.now() - 120000).toISOString();
+        snap.forEach(function(d) {
+          if ((d.data().lastSeen || '') < cutoff) {
+            db.collection('washnfold_presence').doc(d.id).delete().catch(function(){});
+          }
+        });
+      } catch(e) {}
+    };
+
+    window._fbListenPresence = function(cb) {
+      try {
+        return db.collection('washnfold_presence').onSnapshot(function(snap) {
+          var cutoff = new Date(Date.now() - 120000).toISOString();
+          var sessions = [];
+          snap.forEach(function(d) {
+            var data = d.data();
+            if ((data.lastSeen || '') > cutoff && data.sessionId !== SID) {
+              sessions.push(data);
+            }
+          });
+          if (cb) cb(sessions);
+        });
+      } catch(e) { return null; }
+    };
+
+    window._fbListenData = function(cb) {
+      try {
+        return db.collection('washnfold').doc('appdata').onSnapshot(function(snap) {
+          if (snap.exists) {
+            var d = snap.data();
+            if (cb && d.payload) cb(d.payload, d.updatedAt);
+          }
+        });
+      } catch(e) { return null; }
+    };
+
+    window._firebaseReady = true;
+
+  } catch(e) {
+    window._firebaseBlocked = true;
+    window._firebaseReady   = true;
+  }
+};
+
+// ── Step 3: Script injection with primary → fallback CDN chain ────────────────
+// onerror on script tags is completely silent — no console errors on blocked networks.
+(function() {
+  var FB_VER = '10.12.2';
+  var CDN1   = 'https://www.gstatic.com/firebasejs/' + FB_VER + '/';
+  var CDN2   = 'https://cdn.jsdelivr.net/npm/firebase@' + FB_VER + '/';
+
+  function goOffline() {
+    if (window._firebaseReady) return;
+    window._firebaseBlocked = true;
+    window._firebaseReady   = true;
+  }
+
+  function injectScript(url, onOk, onFail) {
+    var s = document.createElement('script');
+    s.src     = url;
+    s.onload  = onOk;
+    s.onerror = onFail;
+    document.head.appendChild(s);
+  }
+
+  function loadFirestore() {
+    injectScript(
+      CDN1 + 'firebase-firestore-compat.js',
+      function() { try { window._initFirebase(); } catch(e) { goOffline(); } },
+      function() {
+        injectScript(
+          CDN2 + 'firebase-firestore-compat.js',
+          function() { try { window._initFirebase(); } catch(e) { goOffline(); } },
+          goOffline
+        );
+      }
+    );
+  }
+
+  injectScript(
+    CDN1 + 'firebase-app-compat.js',
+    loadFirestore,
+    function() {
+      injectScript(CDN2 + 'firebase-app-compat.js', loadFirestore, goOffline);
+    }
+  );
+})();
 </script>
 <style>
 :root {
@@ -347,6 +509,7 @@ body.mobile-view .card-title-row { flex-direction: column; align-items: flex-sta
         🔔<span class="notif-badge" id="notif-count">0</span>
       </div>
       <span id="autosave-indicator" style="font-family:'DM Mono',monospace;font-size:0.68rem;color:var(--success);opacity:0;transition:opacity 1.2s;">✓ Saved</span>
+      <span id="online-users-badge" title="Users currently logged in" style="display:none;background:rgba(81,207,102,0.1);border:1px solid rgba(81,207,102,0.3);border-radius:20px;padding:0.25rem 0.6rem;font-size:0.68rem;color:var(--success);font-family:'DM Mono',monospace;cursor:default;">🟢 1 online</span>
       <button class="btn btn-sm btn-danger" onclick="confirmLogout()" id="logout-btn">🔒 Logout</button>
     </div>
   </header>
@@ -520,6 +683,18 @@ body.mobile-view .card-title-row { flex-direction: column; align-items: flex-sta
           <div id="bag-preview" style="margin-top:0.5rem;font-size:0.75rem;color:var(--muted);font-family:'DM Mono',monospace;"></div>
         </div>
 
+        <!-- Parceling Cost Control -->
+        <div style="margin-bottom:0.9rem;padding:0.8rem 1rem;background:rgba(249,115,22,0.05);border:1px solid rgba(249,115,22,0.25);border-radius:8px;">
+          <div style="display:flex;align-items:center;justify-content:space-between;gap:0.6rem;flex-wrap:wrap;">
+            <label style="display:flex;align-items:center;gap:0.5rem;cursor:pointer;">
+              <input type="checkbox" id="parceling-include" checked onchange="renderInvItems()" style="width:15px;height:15px;cursor:pointer;accent-color:var(--accent3);">
+              <span style="font-family:'DM Mono',monospace;font-size:0.7rem;letter-spacing:0.1em;text-transform:uppercase;color:var(--accent3);">📦 Include Parceling Cost</span>
+            </label>
+            <span style="font-size:0.72rem;color:var(--muted);font-family:'DM Mono',monospace;">50 FCFA/item (Wash &amp; Iron only)</span>
+          </div>
+          <div id="parceling-preview" style="margin-top:0.4rem;font-size:0.72rem;color:var(--muted);font-family:'DM Mono',monospace;"></div>
+        </div>
+
         <div class="btn-row">
           <button class="btn btn-primary" onclick="addItem()">＋ Add Item</button>
           <button class="btn btn-secondary" onclick="showPriceModal()">📋 Price List</button>
@@ -546,7 +721,7 @@ body.mobile-view .card-title-row { flex-direction: column; align-items: flex-sta
         <div class="card-title-row">
           <div class="card-title">▸ Invoice Preview</div>
           <div style="display:flex;gap:0.5rem;flex-wrap:wrap;">
-            <button class="btn btn-sm btn-secondary" onclick="backToBuilder()">← Back</button>
+            <button class="btn btn-sm btn-secondary" onclick="doneInvoice()">← New Invoice</button>
             <button class="btn btn-sm btn-primary" onclick="copyInvoice()">⎘ Copy</button>
             <button class="btn btn-sm btn-secondary" onclick="downloadPDF()" style="background:var(--surface2);border:1px solid var(--border);">⬇ PDF</button>
             <button class="btn btn-sm btn-success" onclick="sendToWhatsApp()">📲 Send via WhatsApp</button>
@@ -641,6 +816,7 @@ body.mobile-view .card-title-row { flex-direction: column; align-items: flex-sta
             <option value="paid">Paid Only</option>
             <option value="unpaid">Unpaid Only</option>
             <option value="partial">Partial Only</option>
+            <option value="unpaid_partial">Unpaid &amp; Partial</option>
           </select>
         </div>
         <div style="flex:0 0 auto;">
@@ -757,9 +933,11 @@ body.mobile-view .card-title-row { flex-direction: column; align-items: flex-sta
           <option value="partial">Partial</option>
         </select>
         <select id="fin-sort" onchange="filterFinance()">
-          <option value="">Sort by...</option>
-          <option value="date_desc">Date ↓ (newest)</option>
-          <option value="date_asc">Date ↑ (oldest)</option>
+          <option value="">Sort by date modified ↓ (default)</option>
+          <option value="modified_desc">Date Modified ↓ (latest)</option>
+          <option value="modified_asc">Date Modified ↑ (oldest)</option>
+          <option value="date_desc">Collection Date ↓ (newest)</option>
+          <option value="date_asc">Collection Date ↑ (oldest)</option>
           <option value="amount_desc">Amount ↓</option>
           <option value="amount_asc">Amount ↑</option>
           <option value="name">Name A-Z</option>
@@ -772,7 +950,7 @@ body.mobile-view .card-title-row { flex-direction: column; align-items: flex-sta
       </div>
       <div class="tbl-wrap">
         <table class="data-table">
-          <thead><tr><th style="width:32px;"><input type="checkbox" id="fin-check-all-page" onchange="finTogglePageAll(this.checked)" title="Select/deselect this page" style="cursor:pointer;accent-color:var(--danger);width:15px;height:15px;"></th><th>S/N</th><th>Date</th><th>Customer</th><th>Month</th><th>Amount (FCFA)</th><th>Paid</th><th>Balance</th><th>Status</th><th>Actions</th></tr></thead>
+          <thead><tr><th style="width:32px;"><input type="checkbox" id="fin-check-all-page" onchange="finTogglePageAll(this.checked)" title="Select/deselect this page" style="cursor:pointer;accent-color:var(--danger);width:15px;height:15px;"></th><th>S/N</th><th title="Date laundry was received">Coll. Date</th><th title="Date of last payment/change">Modified</th><th>Customer</th><th>Month</th><th>Amount (FCFA)</th><th>Paid</th><th>Balance</th><th>Status</th><th>Actions</th></tr></thead>
           <tbody id="finance-tbody"></tbody>
           <tfoot id="finance-tfoot"></tfoot>
         </table>
@@ -791,6 +969,7 @@ body.mobile-view .card-title-row { flex-direction: column; align-items: flex-sta
         <div style="display:flex;gap:0.5rem;align-items:center;flex-wrap:wrap;">
           <button class="btn btn-sm btn-secondary" onclick="exportDeliveryXLSX(false)">⬇ Export Filtered</button>
           <button class="btn btn-sm btn-secondary" onclick="exportDeliveryXLSX(true)">⬇ Export All</button>
+          <button class="btn btn-sm btn-primary" onclick="exportDeliveryPDF()" style="background:rgba(249,115,22,0.15);border:1px solid rgba(249,115,22,0.5);color:var(--accent3);">📄 PDF</button>
           <div style="display:flex;gap:0.4rem;align-items:center;font-size:0.78rem;color:var(--muted);">
             <span style="width:10px;height:10px;border-radius:50%;background:var(--success);display:inline-block;"></span> Due Day 3
             <span style="width:10px;height:10px;border-radius:50%;background:var(--danger);display:inline-block;margin-left:0.5rem;"></span> Day 4+ Overdue
@@ -849,6 +1028,7 @@ body.mobile-view .card-title-row { flex-direction: column; align-items: flex-sta
       <div class="btn-row" style="margin-top:1rem;">
         <button class="btn btn-sm btn-secondary" onclick="copyDeptList('pre')">📋 Copy Pre-Laundry List</button>
         <button class="btn btn-sm btn-primary" onclick="logDeptSnapshot('pre')">📌 Log Snapshot</button>
+        <button class="btn btn-sm btn-primary" onclick="exportDeptLivePDF('pre')" style="background:rgba(249,115,22,0.15);border:1px solid rgba(249,115,22,0.5);color:var(--accent3);">📄 PDF</button>
       </div>
     </div>
     <div class="card">
@@ -860,6 +1040,7 @@ body.mobile-view .card-title-row { flex-direction: column; align-items: flex-sta
       <div class="btn-row" style="margin-top:1rem;">
         <button class="btn btn-sm btn-secondary" onclick="copyDeptList('post')">📋 Copy Post-Laundry List</button>
         <button class="btn btn-sm btn-primary" onclick="logDeptSnapshot('post')">📌 Log Snapshot</button>
+        <button class="btn btn-sm btn-primary" onclick="exportDeptLivePDF('post')" style="background:rgba(249,115,22,0.15);border:1px solid rgba(249,115,22,0.5);color:var(--accent3);">📄 PDF</button>
       </div>
     </div>
     <div class="card">
@@ -1772,26 +1953,60 @@ function launchApp() {
   }, 2000);
 }
 
+function showOfflineBanner() {
+  // Only show once per session
+  if (window._offlineBannerShown) return;
+  window._offlineBannerShown = true;
+  const app = document.getElementById('app');
+  if (!app || app.classList.contains('screen-hidden')) return;
+  const banner = document.createElement('div');
+  banner.id = 'offline-banner';
+  banner.style.cssText = 'position:fixed;bottom:1rem;left:50%;transform:translateX(-50%);background:rgba(30,37,48,0.97);border:1px solid rgba(232,197,71,0.5);border-radius:10px;padding:0.7rem 1.2rem;font-family:\'DM Mono\',monospace;font-size:0.75rem;color:var(--accent);z-index:9999;display:flex;align-items:center;gap:0.8rem;max-width:90vw;box-shadow:0 4px 20px rgba(0,0,0,0.5);';
+  banner.innerHTML = `<span>📵</span><span><b>Running in local mode</b> — Firebase/cloud sync unavailable on this network. All data is saved locally. Switch to a different network to re-enable cloud sync.</span><button onclick="document.getElementById('offline-banner').remove()" style="background:none;border:none;color:var(--muted);cursor:pointer;font-size:1rem;padding:0 0.2rem;flex-shrink:0;">✕</button>`;
+  document.body.appendChild(banner);
+  // Auto-dismiss after 12 seconds
+  setTimeout(() => { try { banner.remove(); } catch(_){} }, 12000);
+}
+
 async function loadCloudDataAndProceed() {
   const msgEl = document.getElementById('cloud-load-msg');
-  if (msgEl) msgEl.textContent = `Connecting to cloud...`;
+  if (msgEl) msgEl.textContent = 'Connecting to cloud...';
 
+  // Wait for Firebase to either connect or time out (max 9s — covers the 8s module timeout)
   let waited = 0;
-  while (!window._firebaseReady && waited < 4000) {
+  while (!window._firebaseReady && waited < 9000) {
     await new Promise(r => setTimeout(r, 100));
     waited += 100;
   }
 
-  let rawData = null;
-
-  if (window._fbGetData) {
-    if (msgEl) msgEl.textContent = `Loading session from cloud...`;
-    rawData = await window._fbGetData();
+  // If Firebase is blocked, skip cloud load and go straight to localStorage
+  if (window._firebaseBlocked) {
+    if (msgEl) msgEl.textContent = '📵 Network limited — loading from local storage...';
   }
 
+  let rawData = null;
+
+  // Try cloud first (unless we already know it's blocked)
+  if (!window._firebaseBlocked && window._fbGetData) {
+    if (msgEl) msgEl.textContent = 'Loading session from cloud...';
+    try {
+      rawData = await window._fbGetData();
+    } catch(e) {
+      console.warn('Cloud load failed:', e.message);
+    }
+  }
+
+  // Always try localStorage as fallback
   if (!rawData) {
-    const local = localStorage.getItem('washnfold_db');
-    if (local) { rawData = local; if (msgEl) msgEl.textContent = 'Loaded from local cache...'; }
+    try {
+      const local = localStorage.getItem('washnfold_db');
+      if (local) {
+        rawData = local;
+        if (msgEl) msgEl.textContent = window._firebaseBlocked
+          ? '✓ Data loaded from device storage'
+          : 'Cloud unavailable — loaded from local cache...';
+      }
+    } catch(e) {}
   }
 
   if (rawData) {
@@ -1885,7 +2100,7 @@ function confirmLogout(isAuto) {
   logActivity('Logout', isAuto ? 'Auto-logout due to inactivity' : 'Manual logout');
   const btn = document.getElementById('logout-btn');
   if (btn) { btn.textContent = '⏳ Saving...'; btn.disabled = true; }
-  const saveObj = { ...DB, _appVersion: '6.0', _savedAt: new Date().toISOString() };
+  const saveObj = { ...DB, _appVersion: '7.0', _savedAt: new Date().toISOString() };
   const jsonStr = JSON.stringify(saveObj);
   try { localStorage.setItem('washnfold_db', jsonStr); } catch(e) {}
   const finish = () => {
@@ -1925,7 +2140,7 @@ function initEmailJS() {
 function buildFullBackupBlob() {
   const saveObj = {
     ...DB,
-    _appVersion: '6.0',
+    _appVersion: '7.0',
     _savedAt: new Date().toISOString(),
     _type: 'full_backup'
   };
@@ -2149,6 +2364,16 @@ function doLogout() {
   // Stop all background timers
   if (_inactivityTimer) { clearTimeout(_inactivityTimer); _inactivityTimer = null; }
   stopDailyEmailScheduler();
+
+  // Stop presence heartbeat (removes this session from online list)
+  if (window._fbStopPresenceHeartbeat) {
+    window._fbStopPresenceHeartbeat(); // async fire-and-forget
+  }
+
+  // Unsubscribe from realtime listeners
+  if (_presenceUnsubscribe) { try { _presenceUnsubscribe(); } catch(e){} _presenceUnsubscribe = null; }
+  if (_dataUnsubscribe) { try { _dataUnsubscribe(); } catch(e){} _dataUnsubscribe = null; }
+
   document.body.classList.remove('logged-in');
   document.body.classList.remove('mobile-view');
   document.getElementById('login-pass').value = '';
@@ -2161,20 +2386,27 @@ function doLogout() {
   if (prog) { prog.style.transition = 'none'; prog.style.width = '0%'; }
   const btn = document.getElementById('logout-btn');
   if (btn) { btn.textContent = '🔒 Logout'; btn.disabled = false; }
+  const badge = document.getElementById('online-users-badge');
+  if (badge) badge.style.display = 'none';
   currentAccountType = 'manager';
   currentAccountUsername = '';
   currentAdminAccountId = null;
+  _lastRemoteUpdate = null;
   showScreen('login-screen');
 }
 
 let _reminderIntervalId = null;
+let _presenceUnsubscribe = null;
+let _dataUnsubscribe = null;
+let _lastRemoteUpdate = null;
+
 function initApp() {
   const today = new Date().toISOString().split('T')[0];
   document.getElementById('inv-collection-date').value = '';
   document.getElementById('exp-date').value = today;
   document.getElementById('report-date').value = today;
-  const now = new Date(); now.setHours(now.getHours()+1); now.setMinutes(0);
-  document.getElementById('rem-datetime').value = now.toISOString().slice(0,16);
+  const now2 = new Date(); now2.setHours(now2.getHours()+1); now2.setMinutes(0);
+  document.getElementById('rem-datetime').value = now2.toISOString().slice(0,16);
   loadSettingsUI();
   loadPriceEditTable();
   applyAccountRestrictions();
@@ -2186,6 +2418,69 @@ function initApp() {
   startInactivityTracking();
   initEmailJS();
   scheduleDailyEmail();
+
+  // Show offline banner if Firebase was blocked (MTN etc.)
+  if (window._firebaseBlocked) {
+    setTimeout(showOfflineBanner, 1500);
+  }
+
+  // ── Multi-user presence: register this session online ──
+  if (window._fbStartPresenceHeartbeat) {
+    window._fbStartPresenceHeartbeat(currentAccountUsername, currentAccountType);
+  }
+
+  // ── Listen for other users coming online/going offline ──
+  if (window._fbListenPresence) {
+    if (_presenceUnsubscribe) _presenceUnsubscribe();
+    _presenceUnsubscribe = window._fbListenPresence(function(otherSessions) {
+      const badge = document.getElementById('online-users-badge');
+      if (!badge) return;
+      const count = otherSessions.length;
+      if (count === 0) {
+        badge.style.display = 'none';
+      } else {
+        badge.style.display = '';
+        const names = otherSessions.map(s => s.username + ' (' + s.accountType + ')').join(', ');
+        badge.textContent = '🟢 ' + count + ' other' + (count > 1 ? 's' : '') + ' online';
+        badge.title = 'Also online: ' + names;
+      }
+    });
+  }
+
+  // ── Listen for remote data changes (another user saved something) ──
+  if (window._fbListenData) {
+    if (_dataUnsubscribe) _dataUnsubscribe();
+    _dataUnsubscribe = window._fbListenData(function(payload, updatedAt) {
+      // Ignore if this is our own save (within last 3 seconds)
+      if (_lastRemoteUpdate && updatedAt <= _lastRemoteUpdate) return;
+      _lastRemoteUpdate = updatedAt;
+      // Only reload if this update is significantly newer than our last save
+      // (gives a 4-second grace window to avoid re-loading our own writes)
+      const updateAge = Date.now() - new Date(updatedAt).getTime();
+      if (updateAge < 4000) return; // too fresh — probably our own write
+      try {
+        const loaded = JSON.parse(payload);
+        // Merge without overwriting credentials (those stay local per session)
+        const savedCreds = {
+          credentials: DB.credentials,
+          superUserCredentials: DB.superUserCredentials,
+          adminCredentials: DB.adminCredentials,
+          adminAccounts: DB.adminAccounts
+        };
+        mergeLoadedData(loaded);
+        // Restore credentials (don't let remote overwrite session creds)
+        Object.assign(DB, savedCreds);
+        renderAll();
+        const ind = document.getElementById('autosave-indicator');
+        if (ind) {
+          ind.style.color = 'var(--info)';
+          ind.textContent = '↻ Synced';
+          ind.style.opacity = '1';
+          setTimeout(() => { ind.style.opacity = '0'; ind.textContent = '✓ Saved'; ind.style.color = 'var(--success)'; }, 2500);
+        }
+      } catch(e) { console.warn('Remote sync merge error:', e); }
+    });
+  }
 }
 
 function applyAccountRestrictions() {
@@ -2369,6 +2664,9 @@ function cancelInvoice() {
   const _bagCP  = document.getElementById('bag-custom-price');   if (_bagCP)   _bagCP.value     = '';
   const _bagCR  = document.getElementById('bag-custom-row');     if (_bagCR)   _bagCR.style.display = 'none';
   const _bagPV  = document.getElementById('bag-preview');        if (_bagPV)   _bagPV.textContent  = '';
+  // Reset parceling toggle to default ON
+  const _parcelInc = document.getElementById('parceling-include'); if (_parcelInc) _parcelInc.checked = true;
+  const _parcelPrev = document.getElementById('parceling-preview'); if (_parcelPrev) _parcelPrev.textContent = '';
 }
 
 function onItemChange() {
@@ -2454,16 +2752,24 @@ function renderInvItems() {
     '</div>';
   }).join('');
   const totalWashIron = currentInvoiceItems.filter(i => i.service === 'wash_iron').reduce((s,i) => s+i.qty, 0);
-  const parceling = totalWashIron * 50;
+  const parcelingOn = document.getElementById('parceling-include')?.checked ?? true;
+  const parceling = parcelingOn ? totalWashIron * 50 : 0;
   const totalDresses = currentInvoiceItems.reduce((s,i) => s + i.qty, 0);
   const bagIncluded = document.getElementById('bag-include')?.checked ?? true;
   const bagCost = bagIncluded ? getBagPrice(totalDresses) : 0;
   const grand = currentInvoiceItems.reduce((s,i) => s+i.subtotal, 0) + parceling + bagCost;
   totalRow.style.display = 'block';
   totalRow.innerHTML = '<div style="display:flex;justify-content:space-between;flex-wrap:wrap;gap:0.5rem;font-family:\'DM Mono\',monospace;font-size:0.82rem;color:var(--muted);">' +
-    (parceling > 0 ? '<span>Parceling (' + totalWashIron + ' items x50): ' + parceling.toLocaleString() + ' FCFA</span>' : '') +
+    (parcelingOn && parceling > 0 ? '<span>Parceling (' + totalWashIron + ' items x50): ' + parceling.toLocaleString() + ' FCFA</span>' : (totalWashIron > 0 && !parcelingOn ? '<span style="color:var(--accent3);text-decoration:line-through;">Parceling skipped</span>' : '')) +
     (bagCost > 0 ? '<span>Bag: ' + bagCost.toLocaleString() + ' FCFA</span>' : '') +
     '<span style="font-size:1rem;color:var(--accent);font-weight:700;">TOTAL: ' + grand.toLocaleString() + ' FCFA</span></div>';
+  // Update parceling preview
+  const parcelPrev = document.getElementById('parceling-preview');
+  if (parcelPrev) {
+    if (!parcelingOn) parcelPrev.textContent = 'Parceling will NOT be charged for this customer.';
+    else if (totalWashIron > 0) parcelPrev.textContent = totalWashIron + ' Wash & Iron item(s) × 50 FCFA = ' + (totalWashIron*50).toLocaleString() + ' FCFA parceling cost.';
+    else parcelPrev.textContent = 'No Wash & Iron items yet — parceling cost will be calculated once added.';
+  }
   genRow.style.display = 'flex';
   updateBagPreview();
 }
@@ -2544,12 +2850,13 @@ function updateBagPreview() {
   const totalRow = document.getElementById('inv-total-row');
   if (totalRow && currentInvoiceItems.length > 0) {
     const totalWI = currentInvoiceItems.filter(i => i.service === 'wash_iron').reduce((s,i) => s + i.qty, 0);
-    const parceling = totalWI * 50;
+    const parcelingOn2 = document.getElementById('parceling-include')?.checked ?? true;
+    const parceling = parcelingOn2 ? totalWI * 50 : 0;
     const itemsTotal = currentInvoiceItems.reduce((s,i) => s + i.subtotal, 0);
     const bagCost = included ? price : 0;
     const grand = itemsTotal + parceling + bagCost;
     totalRow.innerHTML = '<div style="display:flex;justify-content:space-between;flex-wrap:wrap;gap:0.5rem;font-family:\'DM Mono\',monospace;font-size:0.82rem;color:var(--muted);">' +
-      (parceling > 0 ? '<span>Parceling (' + totalWI + ' x50): ' + parceling.toLocaleString() + ' FCFA</span>' : '') +
+      (parcelingOn2 && parceling > 0 ? '<span>Parceling (' + totalWI + ' x50): ' + parceling.toLocaleString() + ' FCFA</span>' : (totalWI > 0 && !parcelingOn2 ? '<span style="color:var(--accent3);text-decoration:line-through;">Parceling skipped</span>' : '')) +
       (bagCost > 0 ? '<span>Bag: ' + bagCost.toLocaleString() + ' FCFA</span>' : '') +
       '<span style="font-size:1rem;color:var(--accent);font-weight:700;">TOTAL: ' + grand.toLocaleString() + ' FCFA</span></div>';
   }
@@ -2558,13 +2865,14 @@ function updateBagPreview() {
 
 function generateInvoice() {
   if (currentInvoiceItems.length === 0) { showToast('No items!', true); return; }
-  const text = buildInvoiceText(currentInvoiceCustomer, currentInvoiceCollectionDate, currentInvoiceItems);
+  const _parcelingIncluded = document.getElementById('parceling-include')?.checked ?? true;
+  const text = buildInvoiceText(currentInvoiceCustomer, currentInvoiceCollectionDate, currentInvoiceItems, _parcelingIncluded);
   document.getElementById('invoice-output').textContent = text;
 
   const washOnlyItems = currentInvoiceItems.filter(i => i.service === 'wash_only');
   const washIronItems = currentInvoiceItems.filter(i => i.service === 'wash_iron');
   const totalWashIron = washIronItems.reduce((s,i) => s+i.qty, 0);
-  const parceling = totalWashIron * 50;
+  const parceling = _parcelingIncluded ? totalWashIron * 50 : 0;
   const _totalDresses = currentInvoiceItems.reduce((s,i) => s+i.qty, 0);
   const _bagIncluded = document.getElementById('bag-include')?.checked ?? true;
   const _bagCost = _bagIncluded ? getBagPrice(_totalDresses) : 0;
@@ -2577,7 +2885,8 @@ function generateInvoice() {
   const svcLabel = serviceTypes.length === 2 ? 'mixed' : serviceTypes[0];
 
   const now = new Date().toISOString().split('T')[0];
-  const finDate = now; // Finance record date = invoice creation date
+  // Finance uses collection date (date laundry was received), not invoice build date
+  const finDate = currentInvoiceCollectionDate || now;
   const month = new Date((currentInvoiceCollectionDate || now) + 'T00:00:00').toLocaleString('en', { month: 'long' });
   const delDate = addDays(currentInvoiceCollectionDate, DB.settings.delMin);
 
@@ -2598,6 +2907,7 @@ function generateInvoice() {
     existingInv.total           = grand;
     existingInv.serviceTypes    = svcLabel;
     existingInv.invoiceText     = text;
+    existingInv.parcelingIncluded = _parcelingIncluded;
     // Keep original date (invoice creation date stays unchanged)
 
     // Update linked finance record
@@ -2605,14 +2915,16 @@ function generateInvoice() {
     if (fin) {
       fin.customer      = currentInvoiceCustomer;
       fin.month         = month;
-      fin.date          = now;  // keep as invoice creation date
+      // date = collection date (date of laundry reception), dateModified = now
+      fin.date          = currentInvoiceCollectionDate || fin.date;
+      fin.dateModified  = now;
       fin.amount        = grand;
       // Re-evaluate paidAmount: can't have paid more than new total
       fin.paidAmount    = Math.min(preservedPaidAmt, grand);
       fin.status        = fin.paidAmount >= grand ? 'paid' : fin.paidAmount > 0 ? 'partial' : 'unpaid';
     } else {
       // Finance record missing — recreate it
-      DB.finance.push({ id: 'fin_' + Date.now(), invoiceId: editingInvoiceId, customer: currentInvoiceCustomer, month, amount: grand, paidAmount: preservedPaidAmt, status: preservedPayStatus, paymentMethod: '-', date: finDate });
+      DB.finance.push({ id: 'fin_' + Date.now(), invoiceId: editingInvoiceId, customer: currentInvoiceCustomer, month, amount: grand, paidAmount: preservedPaidAmt, status: preservedPayStatus, paymentMethod: '-', date: finDate, dateModified: now });
     }
     // Sync invoice payment status with finance
     existingInv.paymentStatus = fin ? fin.status : preservedPayStatus;
@@ -2640,38 +2952,43 @@ function generateInvoice() {
   } else {
     // ── NEW INVOICE MODE ───────────────────────────────────────────
     const id = 'inv_' + Date.now();
+    const customerName = currentInvoiceCustomer;
 
     const inv = {
-      id, date: now, customerName: currentInvoiceCustomer,
+      id, date: now, customerName,
       collectionDate: currentInvoiceCollectionDate, deliveryDate: delDate,
       items: JSON.parse(JSON.stringify(currentInvoiceItems)),
       total: grand, paymentStatus: 'unpaid', paidAmount: 0,
       serviceTypes: svcLabel, invoiceText: text,
-      bagCost: _bagCost, bagIncluded: _bagIncluded
+      bagCost: _bagCost, bagIncluded: _bagIncluded,
+      parcelingIncluded: _parcelingIncluded
     };
     DB.invoices.unshift(inv);
-    DB.finance.push({ id: 'fin_' + Date.now(), invoiceId: id, customer: currentInvoiceCustomer, month, amount: grand, paidAmount: 0, status: 'unpaid', paymentMethod: '-', date: finDate });
-    DB.deliveries.push({ id: 'del_' + Date.now(), invoiceId: id, customer: currentInvoiceCustomer, serviceTypes: svcLabel, collectionDate: currentInvoiceCollectionDate, expectedDate: delDate, status: 'pending', deliveredDate: null });
-    DB.customerHistory[currentInvoiceCustomer] = { lastService: svcLabel === 'mixed' ? (washIronItems.length > washOnlyItems.length ? 'wash_iron' : 'wash_only') : svcLabel, lastDate: now };
+    // Finance date = collection date (date of laundry reception)
+    DB.finance.push({ id: 'fin_' + Date.now(), invoiceId: id, customer: customerName, month, amount: grand, paidAmount: 0, status: 'unpaid', paymentMethod: '-', date: finDate, dateModified: now });
+    DB.deliveries.push({ id: 'del_' + Date.now(), invoiceId: id, customer: customerName, serviceTypes: svcLabel, collectionDate: currentInvoiceCollectionDate, expectedDate: delDate, status: 'pending', deliveredDate: null });
+    DB.customerHistory[customerName] = { lastService: svcLabel === 'mixed' ? (washIronItems.length > washOnlyItems.length ? 'wash_iron' : 'wash_only') : svcLabel, lastDate: now };
     currentViewInvoiceText = text;
     document.getElementById('inv-step-1').style.display = 'none';
     document.getElementById('inv-step-2').style.display = 'block';
-    addNotification(`Invoice created for ${currentInvoiceCustomer} — ${grand.toLocaleString()} FCFA`, 'success');
+    addNotification(`Invoice created for ${customerName} — ${grand.toLocaleString()} FCFA`, 'success');
     logActivity('Invoice Created', `Invoice for ${customerName}, Total: ${grand.toLocaleString()} FCFA`); showToast('Invoice saved ✓');
-    if (currentAccountType === 'admin') logAdminActivity('New Invoice', `Created invoice for ${currentInvoiceCustomer} — ${grand.toLocaleString()} FCFA`);
+    if (currentAccountType === 'admin') logAdminActivity('New Invoice', `Created invoice for ${customerName} — ${grand.toLocaleString()} FCFA`);
   }
 
   renderAll();
-  saveData();
+  saveData(true); // immediate save — critical action
   window.scrollTo(0, 0);
 }
 
-function buildInvoiceText(name, collDate, items) {
+function buildInvoiceText(name, collDate, items, parcelingIncluded) {
+  // parcelingIncluded defaults to true if not specified (backward compat)
+  if (parcelingIncluded === undefined) parcelingIncluded = true;
   const washOnlyItems = items.filter(i => i.service === 'wash_only');
   const washIronItems = items.filter(i => i.service === 'wash_iron');
   const totalWashOnly = washOnlyItems.reduce((s,i) => s+i.qty, 0);
   const totalWashIron = washIronItems.reduce((s,i) => s+i.qty, 0);
-  const parceling = totalWashIron * 50;
+  const parceling = parcelingIncluded ? totalWashIron * 50 : 0;
   // Read bag cost safely from DOM (0 when DOM element absent, e.g. during PDF re-render)
   const _bagEl = document.getElementById('bag-include');
   const bagCost = (_bagEl && _bagEl.checked) ? getBagPrice(totalWashOnly + totalWashIron) : 0;
@@ -2762,6 +3079,9 @@ function doneInvoice() {
   const _bagCP2  = document.getElementById('bag-custom-price');   if (_bagCP2)  _bagCP2.value     = '';
   const _bagCR2  = document.getElementById('bag-custom-row');     if (_bagCR2)  _bagCR2.style.display = 'none';
   const _bagPV2  = document.getElementById('bag-preview');        if (_bagPV2)  _bagPV2.textContent  = '';
+  // Reset parceling toggle to default ON
+  const _parcelInc2 = document.getElementById('parceling-include'); if (_parcelInc2) _parcelInc2.checked = true;
+  const _parcelPrev2 = document.getElementById('parceling-preview'); if (_parcelPrev2) _parcelPrev2.textContent = '';
   renderInvItems();
   window.scrollTo(0, 0);
 }
@@ -2904,21 +3224,25 @@ function renderFinance() {
   const sort         = document.getElementById('fin-sort')?.value          || '';
 
   let recs = DB.finance.filter(r => {
-    if (!r || typeof r !== 'object') return false; // guard against corrupt records
+    if (!r || typeof r !== 'object') return false;
     if (search && !(r.customer||'').toLowerCase().includes(search)) return false;
     if (statusFilter && r.status !== statusFilter) return false;
     if (monthFilter  && r.month  !== monthFilter)  return false;
-    if (fromFilter   && (r.date||'') <  fromFilter) return false;
-    if (toFilter     && (r.date||'') >  toFilter)   return false;
+    // Date filters compare against dateModified (when last touched), falling back to date
+    const effectiveDate = r.dateModified || r.date || '';
+    if (fromFilter && effectiveDate < fromFilter) return false;
+    if (toFilter   && effectiveDate > toFilter)   return false;
     return true;
   });
 
-  if      (sort === 'date_desc')   recs.sort((a,b) => (b.date||'').localeCompare(a.date||''));
-  else if (sort === 'date_asc')    recs.sort((a,b) => (a.date||'').localeCompare(b.date||''));
+  if      (sort === 'date_desc')     recs.sort((a,b) => (b.date||'').localeCompare(a.date||''));
+  else if (sort === 'date_asc')      recs.sort((a,b) => (a.date||'').localeCompare(b.date||''));
+  else if (sort === 'modified_desc') recs.sort((a,b) => ((b.dateModified||b.date||'').localeCompare(a.dateModified||a.date||'')));
+  else if (sort === 'modified_asc')  recs.sort((a,b) => ((a.dateModified||a.date||'').localeCompare(b.dateModified||b.date||'')));
   else if (sort === 'amount_desc') recs.sort((a,b) => b.amount - a.amount);
   else if (sort === 'amount_asc')  recs.sort((a,b) => a.amount - b.amount);
   else if (sort === 'name')        recs.sort((a,b) => a.customer.localeCompare(b.customer));
-  else                             recs.sort((a,b) => (b.date||'').localeCompare(a.date||'')); // default: newest first
+  else                             recs.sort((a,b) => ((b.dateModified||b.date||'').localeCompare(a.dateModified||a.date||''))); // default: latest modified first
 
   // Store filtered list for export
   window._filteredFinance = recs;
@@ -2927,9 +3251,8 @@ function renderFinance() {
   const tfoot = document.getElementById('finance-tfoot');
   if (!tbody) return;
   if (recs.length === 0) {
-    tbody.innerHTML = `<tr><td colspan="9" style="text-align:center;color:var(--muted);padding:2rem;">No records found.</td></tr>`;
+    tbody.innerHTML = `<tr><td colspan="10" style="text-align:center;color:var(--muted);padding:2rem;">No records found.</td></tr>`;
     if (tfoot) tfoot.innerHTML = '';
-    // Clear pagination
     const pgEl = document.getElementById('fin-pagination');
     if (pgEl) pgEl.innerHTML = '';
     return;
@@ -2944,22 +3267,23 @@ function renderFinance() {
   const pageRecs  = recs.slice(pageStart, pageEnd);
 
   tbody.innerHTML = pageRecs.map((r, i) => {
-    const realIdx = DB.finance.indexOf(r);
     const globalRowNum = pageStart + i + 1;
     const balance = (r.amount||0) - (r.paidAmount || 0);
     const badge = `<span class="badge badge-${r.status}">${r.status}</span>`;
     let methodTag = '';
     if (r.status !== 'unpaid') {
       if (r.paymentMethod === 'Mobile Money') methodTag = `<span style="display:inline-block;background:rgba(78,205,196,0.15);border:1px solid rgba(78,205,196,0.4);border-radius:4px;padding:0.1rem 0.4rem;font-family:'DM Mono',monospace;font-size:0.72rem;color:var(--accent2);margin-left:0.3rem;">M</span>`;
-      else if (r.paymentMethod === 'Cash')         methodTag = `<span style="display:inline-block;background:rgba(232,197,71,0.15);border:1px solid rgba(232,197,71,0.4);border-radius:4px;padding:0.1rem 0.4rem;font-family:'DM Mono',monospace;font-size:0.72rem;color:var(--accent);margin-left:0.3rem;">C</span>`;
+      else if (r.paymentMethod === 'Cash')    methodTag = `<span style="display:inline-block;background:rgba(232,197,71,0.15);border:1px solid rgba(232,197,71,0.4);border-radius:4px;padding:0.1rem 0.4rem;font-family:'DM Mono',monospace;font-size:0.72rem;color:var(--accent);margin-left:0.3rem;">C</span>`;
     }
-    const dateDisplay = r.date ? r.date : '—';
+    const dateDisplay = r.date || '—';
+    const modDisplay  = r.dateModified || r.date || '—';
     const isChecked = _finSelectedIds.has(r.id);
     const rowStyle = isChecked ? 'background:rgba(255,107,107,0.08);' : '';
     return `<tr style="${rowStyle}">
       <td style="width:32px;"><input type="checkbox" data-id="${escAttr(r.id)}" ${isChecked?'checked':''} onchange="finToggleRow(this)" style="cursor:pointer;accent-color:var(--danger);width:15px;height:15px;"></td>
       <td style="font-family:'DM Mono',monospace;font-size:0.75rem;color:var(--muted);">${globalRowNum}</td>
-      <td style="font-family:'DM Mono',monospace;font-size:0.78rem;color:var(--info);">${dateDisplay}</td>
+      <td style="font-family:'DM Mono',monospace;font-size:0.78rem;color:var(--muted);" title="Collection/reception date">${dateDisplay}</td>
+      <td style="font-family:'DM Mono',monospace;font-size:0.78rem;color:var(--info);" title="Date last modified (payment)">${modDisplay}</td>
       <td><b>${escHtml(r.customer)}</b></td>
       <td style="font-family:'DM Mono',monospace;font-size:0.78rem;">${r.month}</td>
       <td style="font-family:'DM Mono',monospace;color:var(--accent);">${(r.amount||0).toLocaleString()}</td>
@@ -2967,8 +3291,8 @@ function renderFinance() {
       <td style="font-family:'DM Mono',monospace;color:${balance>0?'var(--danger)':'var(--success)'};">${balance.toLocaleString()}</td>
       <td>${badge}</td>
       <td style="display:flex;gap:0.3rem;flex-wrap:wrap;">
-        <button class="btn btn-sm btn-success" style="padding:0.3rem 0.6rem;" onclick="openPayModal(${realIdx})">💰</button>
-        <button class="btn btn-sm btn-danger" style="padding:0.3rem 0.6rem;" onclick="deleteFinRecord(${realIdx})">✕</button>
+        <button class="btn btn-sm btn-success" style="padding:0.3rem 0.6rem;" onclick="openPayModal('${escAttr(r.id)}')">💰</button>
+        <button class="btn btn-sm btn-danger" style="padding:0.3rem 0.6rem;" onclick="deleteFinRecord('${escAttr(r.id)}')">✕</button>
       </td>
     </tr>`;
   }).join('');
@@ -2989,7 +3313,7 @@ function renderFinance() {
   const footLabel  = isFiltered ? `Filtered (${recs.length} records)` : `All Records (${recs.length})`;
   if (tfoot) tfoot.innerHTML = `<tr style="background:rgba(232,197,71,0.08);font-weight:700;border-top:2px solid rgba(232,197,71,0.4);">
     <td></td>
-    <td colspan="4" style="font-family:'DM Mono',monospace;font-size:0.78rem;color:var(--accent);padding:0.6rem 0.8rem;">🔢 ${footLabel}</td>
+    <td colspan="5" style="font-family:'DM Mono',monospace;font-size:0.78rem;color:var(--accent);padding:0.6rem 0.8rem;">🔢 ${footLabel}</td>
     <td style="font-family:'DM Mono',monospace;color:var(--accent);">${filtTotalAmt.toLocaleString()}</td>
     <td style="font-family:'DM Mono',monospace;color:var(--success);">${filtTotalPaid.toLocaleString()}</td>
     <td style="font-family:'DM Mono',monospace;color:${filtTotalBal>0?'var(--danger)':'var(--success)'};">${filtTotalBal.toLocaleString()}</td>
@@ -3176,7 +3500,8 @@ function addManualFinRecord() {
   if (!customer) { showToast('Customer name is required.', true); return; }
   if (!amount)   { showToast('Amount billed is required.', true); return; }
   const status = paid >= amount ? 'paid' : paid > 0 ? 'partial' : 'unpaid';
-  const rec = { id: 'fin_man_' + Date.now(), customer, month, amount, paidAmount: paid, status, paymentMethod: method, date };
+  const now = new Date().toISOString().split('T')[0];
+  const rec = { id: 'fin_man_' + Date.now(), customer, month, amount, paidAmount: paid, status, paymentMethod: method, date, dateModified: now };
   DB.finance.unshift(rec);
   if (!DB.customerHistory[customer]) DB.customerHistory[customer] = { lastService: 'wash_only', lastDate: date };
   // Reset form
@@ -3186,7 +3511,7 @@ function addManualFinRecord() {
   document.getElementById('mfin-date').value = '';
   renderFinance();
   renderOverview();
-  saveData();
+  saveData(true); // immediate save
   showToast('Financial record added for ' + customer + ' \u2713');
   if (currentAccountType === 'admin') logAdminActivity('Manual Finance', customer + ' — ' + amount.toLocaleString() + ' FCFA');
 }
@@ -3228,7 +3553,11 @@ function generateCustomerStatement() {
   });
   if (allRecs.length === 0) { showToast('No financial records found for "' + custName + '".', true); return; }
   if (monthFilter) allRecs = allRecs.filter(function(r) { return r.month === monthFilter; });
-  if (statusFilter) allRecs = allRecs.filter(function(r) { return r.status === statusFilter; });
+  if (statusFilter === 'unpaid_partial') {
+    allRecs = allRecs.filter(function(r) { return r.status === 'unpaid' || r.status === 'partial'; });
+  } else if (statusFilter) {
+    allRecs = allRecs.filter(function(r) { return r.status === statusFilter; });
+  }
   if (allRecs.length === 0) { showToast('No records found for "' + custName + '" with the selected filters.', true); return; }
 
   // Sort by date then month
@@ -3281,7 +3610,8 @@ function generateCustomerStatement() {
   doc.setDrawColor(232,197,71); doc.setLineWidth(0.7);
   doc.line(margin, y, margin+cW*0.6, y); y += 5;
   doc.setFontSize(8); doc.setFont('helvetica','normal'); doc.setTextColor(100,110,130);
-  const periodLabel = (monthFilter ? monthFilter : 'All time') + (statusFilter ? ' · ' + statusFilter + ' invoices only' : '');
+  const statusLabel = statusFilter === 'unpaid_partial' ? 'Unpaid & Partial' : statusFilter;
+  const periodLabel = (monthFilter ? monthFilter : 'All time') + (statusLabel ? ' · ' + statusLabel + ' invoices only' : '');
   doc.text('Period: ' + periodLabel, margin, y); y += 8;
 
   // ── Summary box ──
@@ -3429,10 +3759,10 @@ function generateCustomerStatement() {
   showToast('Statement PDF downloaded \u2713');
 }
 
-function openPayModal(idx) {
-  const rec = DB.finance[idx];
-  if (!rec) { showToast('Record not found — please refresh the page.', true); return; }
-  document.getElementById('pay-fin-idx').value = idx;
+function openPayModal(recId) {
+  const rec = DB.finance.find(r => r.id === recId);
+  if (!rec) { showToast('Record not found — please refresh.', true); return; }
+  document.getElementById('pay-fin-idx').value = recId; // store ID not index
   // Default add amount = remaining balance
   document.getElementById('pay-amount').value = rec.amount - (rec.paidAmount || 0);
   // Default edit amount = current paid
@@ -3454,6 +3784,75 @@ function openPayModal(idx) {
   openModal('payment-modal');
 }
 
+function _getPayRec() {
+  const recId = document.getElementById('pay-fin-idx').value;
+  return DB.finance.find(r => r.id === recId) || null;
+}
+
+function confirmPayment() {
+  const amt = parseInt(document.getElementById('pay-amount').value) || 0;
+  const method = document.getElementById('pay-method').value;
+  if (amt <= 0) { showToast('Enter an amount greater than 0.', true); return; }
+  const rec = _getPayRec();
+  if (!rec) { showToast('Record not found.', true); return; }
+  rec.paidAmount = Math.min((rec.paidAmount || 0) + amt, rec.amount);
+  rec.paymentMethod = method;
+  rec.status = rec.paidAmount >= rec.amount ? 'paid' : rec.paidAmount > 0 ? 'partial' : 'unpaid';
+  rec.dateModified = new Date().toISOString().split('T')[0];
+  // Sync linked invoice
+  const matchInv = DB.invoices.find(i => i.id === rec.invoiceId) ||
+                   DB.invoices.find(i => i.customerName === rec.customer && i.total === rec.amount);
+  if (matchInv) { matchInv.paymentStatus = rec.status; matchInv.paidAmount = rec.paidAmount; }
+  closeModal('payment-modal');
+  renderFinance(); renderOverview();
+  saveData(true);
+  showToast(`Payment of ${amt.toLocaleString()} FCFA recorded ✓`);
+  addNotification(`${rec.customer} paid ${amt.toLocaleString()} FCFA (${method})`, 'success');
+  logActivity('Payment Recorded', `${rec.customer} — ${amt.toLocaleString()} FCFA via ${method}`, 'finance');
+}
+
+function confirmEditPayment() {
+  const newPaid = parseInt(document.getElementById('pay-edit-amount').value) || 0;
+  const method = document.getElementById('pay-edit-method').value;
+  const rec = _getPayRec();
+  if (!rec) { showToast('Record not found.', true); return; }
+  const oldPaid = rec.paidAmount || 0;
+  rec.paidAmount = Math.min(newPaid, rec.amount);
+  rec.paymentMethod = method;
+  rec.status = rec.paidAmount >= rec.amount ? 'paid' : rec.paidAmount > 0 ? 'partial' : 'unpaid';
+  rec.dateModified = new Date().toISOString().split('T')[0];
+  const matchInv = DB.invoices.find(i => i.id === rec.invoiceId) ||
+                   DB.invoices.find(i => i.customerName === rec.customer && i.total === rec.amount);
+  if (matchInv) { matchInv.paymentStatus = rec.status; matchInv.paidAmount = rec.paidAmount; }
+  closeModal('payment-modal');
+  renderFinance(); renderOverview();
+  saveData(true);
+  showToast(`Payment corrected: ${oldPaid.toLocaleString()} → ${rec.paidAmount.toLocaleString()} FCFA ✓`);
+  addNotification(`${rec.customer} payment corrected to ${rec.paidAmount.toLocaleString()} FCFA`, 'info');
+  logActivity('Payment Corrected', `${rec.customer} — corrected from ${oldPaid.toLocaleString()} to ${rec.paidAmount.toLocaleString()} FCFA`, 'finance');
+}
+
+function confirmReversePayment() {
+  const reason = document.getElementById('pay-reverse-reason').value.trim();
+  const rec = _getPayRec();
+  if (!rec) { showToast('Record not found.', true); return; }
+  if (!confirm(`Reverse payment for ${rec.customer}? This will reset their status to Unpaid.`)) return;
+  const oldPaid = rec.paidAmount || 0;
+  rec.paidAmount = 0;
+  rec.paymentMethod = '-';
+  rec.status = 'unpaid';
+  rec.dateModified = new Date().toISOString().split('T')[0];
+  const matchInv = DB.invoices.find(i => i.id === rec.invoiceId) ||
+                   DB.invoices.find(i => i.customerName === rec.customer && i.total === rec.amount);
+  if (matchInv) { matchInv.paymentStatus = 'unpaid'; matchInv.paidAmount = 0; }
+  closeModal('payment-modal');
+  renderFinance(); renderOverview();
+  saveData(true);
+  showToast(`Payment of ${oldPaid.toLocaleString()} FCFA reversed ✓`);
+  addNotification(`${rec.customer} payment reversed (was ${oldPaid.toLocaleString()} FCFA)${reason ? ' — ' + reason : ''}`, 'info');
+  if (currentAccountType === 'admin') logAdminActivity('Reverse Payment', `${rec.customer} — reversed ${oldPaid.toLocaleString()} FCFA${reason ? ' (' + reason + ')' : ''}`);
+}
+
 function switchPayTab(tab) {
   ['pay','edit','reverse'].forEach(t => {
     document.getElementById(`pay-panel-${t}`).style.display = t === tab ? 'block' : 'none';
@@ -3470,80 +3869,15 @@ function switchPayTab(tab) {
   });
 }
 
-function confirmPayment() {
-  const idx = parseInt(document.getElementById('pay-fin-idx').value);
-  const amt = parseInt(document.getElementById('pay-amount').value) || 0;
-  const method = document.getElementById('pay-method').value;
-  if (amt <= 0) { showToast('Enter an amount greater than 0.', true); return; }
-  const rec = DB.finance[idx];
+function deleteFinRecord(recId) {
+  const rec = DB.finance.find(r => r.id === recId);
   if (!rec) { showToast('Record not found.', true); return; }
-  rec.paidAmount = Math.min((rec.paidAmount || 0) + amt, rec.amount);
-  rec.paymentMethod = method;
-  rec.status = rec.paidAmount >= rec.amount ? 'paid' : rec.paidAmount > 0 ? 'partial' : 'unpaid';
-  // Sync linked invoice: prefer invoiceId link, fallback to name+amount match
-  const matchInv = DB.invoices.find(i => i.id === rec.invoiceId) ||
-                   DB.invoices.find(i => i.customerName === rec.customer && i.total === rec.amount);
-  if (matchInv) { matchInv.paymentStatus = rec.status; matchInv.paidAmount = rec.paidAmount; }
-  closeModal('payment-modal');
-  renderFinance();
-  renderOverview();
-  saveData();
-  showToast(`Payment of ${amt.toLocaleString()} FCFA recorded ✓`);
-  addNotification(`${rec.customer} paid ${amt.toLocaleString()} FCFA (${method})`, 'success');
-  logActivity('Payment Recorded', `${rec.customer} — ${amt.toLocaleString()} FCFA via ${method}`, 'finance');
-}
-
-function confirmEditPayment() {
-  const idx = parseInt(document.getElementById('pay-fin-idx').value);
-  const newPaid = parseInt(document.getElementById('pay-edit-amount').value) || 0;
-  const method = document.getElementById('pay-edit-method').value;
-  const rec = DB.finance[idx];
-  if (!rec) { showToast('Record not found.', true); return; }
-  const oldPaid = rec.paidAmount || 0;
-  rec.paidAmount = Math.min(newPaid, rec.amount);
-  rec.paymentMethod = method;
-  rec.status = rec.paidAmount >= rec.amount ? 'paid' : rec.paidAmount > 0 ? 'partial' : 'unpaid';
-  const matchInv = DB.invoices.find(i => i.id === rec.invoiceId) ||
-                   DB.invoices.find(i => i.customerName === rec.customer && i.total === rec.amount);
-  if (matchInv) { matchInv.paymentStatus = rec.status; matchInv.paidAmount = rec.paidAmount; }
-  closeModal('payment-modal');
-  renderFinance();
-  renderOverview();
-  saveData();
-  showToast(`Payment corrected: ${oldPaid.toLocaleString()} → ${rec.paidAmount.toLocaleString()} FCFA ✓`);
-  addNotification(`${rec.customer} payment corrected to ${rec.paidAmount.toLocaleString()} FCFA`, 'info');
-  logActivity('Payment Corrected', `${rec.customer} — corrected from ${oldPaid.toLocaleString()} to ${rec.paidAmount.toLocaleString()} FCFA`, 'finance');
-}
-
-function confirmReversePayment() {
-  const idx = parseInt(document.getElementById('pay-fin-idx').value);
-  const reason = document.getElementById('pay-reverse-reason').value.trim();
-  const rec = DB.finance[idx];
-  if (!rec) { showToast('Record not found.', true); return; }
-  if (!confirm(`Reverse payment for ${rec.customer}? This will reset their status to Unpaid.`)) return;
-  const oldPaid = rec.paidAmount || 0;
-  rec.paidAmount = 0;
-  rec.paymentMethod = '-';
-  rec.status = 'unpaid';
-  const matchInv = DB.invoices.find(i => i.id === rec.invoiceId) ||
-                   DB.invoices.find(i => i.customerName === rec.customer && i.total === rec.amount);
-  if (matchInv) { matchInv.paymentStatus = 'unpaid'; matchInv.paidAmount = 0; }
-  closeModal('payment-modal');
-  renderFinance();
-  renderOverview();
-  saveData();
-  showToast(`Payment of ${oldPaid.toLocaleString()} FCFA reversed ✓`);
-  addNotification(`${rec.customer} payment reversed (was ${oldPaid.toLocaleString()} FCFA)${reason ? ' — ' + reason : ''}`, 'info');
-  if (currentAccountType === 'admin') logAdminActivity('Reverse Payment', `${rec.customer} — reversed ${oldPaid.toLocaleString()} FCFA${reason ? ' (' + reason + ')' : ''}`);
-}
-
-function deleteFinRecord(idx) {
   if (!confirm('Delete this record?')) return;
-  const rec = DB.finance[idx];
-  DB.finance.splice(idx, 1);
+  DB.finance = DB.finance.filter(r => r.id !== recId);
   renderFinance();
-  saveData();
-  if (currentAccountType === 'admin') logAdminActivity('Delete Finance Record', `Deleted record: ${rec ? rec.customer + ' — ' + rec.amount.toLocaleString() + ' FCFA (' + rec.month + ')' : 'unknown'}`);
+  saveData(true);
+  logActivity('Delete Finance Record', `Deleted: ${rec.customer} — ${rec.amount.toLocaleString()} FCFA (${rec.month})`);
+  if (currentAccountType === 'admin') logAdminActivity('Delete Finance Record', `${rec.customer} — ${rec.amount.toLocaleString()} FCFA (${rec.month})`);
 }
 
 function exportFinanceXLSX(exportAll = false) {
@@ -4335,7 +4669,12 @@ function generateReport() {
     dels = DB.deliveries;
     invs = DB.invoices;
   } else {
-    fins = DB.finance.filter(f => (f.date||'') >= startDate && (f.date||'') <= endDate);
+    // For date-based reports: finance is filtered by dateModified (last activity date)
+    // so daily reports reflect activity on that day, not just when laundry was collected
+    fins = DB.finance.filter(f => {
+      const effectiveDate = f.dateModified || f.date || '';
+      return effectiveDate >= startDate && effectiveDate <= endDate;
+    });
     dels = DB.deliveries.filter(d => d.collectionDate >= startDate && d.collectionDate <= endDate);
     invs = DB.invoices.filter(i => i.date >= startDate && i.date <= endDate);
     if (expStart || expEnd) {
@@ -4462,7 +4801,10 @@ function downloadReportPDF() {
     invs = DB.invoices;
     dels = DB.deliveries;
   } else if (startDate) {
-    fins = DB.finance.filter(f => (f.date||'') >= startDate && (f.date||'') <= endDate);
+    fins = DB.finance.filter(f => {
+      const effectiveDate = f.dateModified || f.date || '';
+      return effectiveDate >= startDate && effectiveDate <= endDate;
+    });
     exps = storedExps || DB.expenses.filter(e => e.date >= startDate && e.date <= endDate);
     invs = DB.invoices.filter(i => i.date >= startDate && i.date <= endDate);
     dels = DB.deliveries.filter(d => d.collectionDate >= startDate && d.collectionDate <= endDate);
@@ -4799,7 +5141,7 @@ function changePassword() {
   document.getElementById('set-conf-pass').value = '';
   logActivity('Password Change', 'Manager password changed');
   // Immediate synchronous save to prevent password revert
-  const saveObj = { ...DB, _appVersion: '6.0', _savedAt: new Date().toISOString() };
+  const saveObj = { ...DB, _appVersion: '7.0', _savedAt: new Date().toISOString() };
   const jsonStr = JSON.stringify(saveObj);
   try { localStorage.setItem('washnfold_db', jsonStr); } catch(e) {}
   if (window._fbSetData) window._fbSetData(jsonStr);
@@ -4820,7 +5162,7 @@ function changeSuperUserPassword() {
   document.getElementById('su-new-pass').value = '';
   document.getElementById('su-conf-pass').value = '';
   logActivity('Password Change', 'Super User password changed');
-  const saveObj = { ...DB, _appVersion: '6.0', _savedAt: new Date().toISOString() };
+  const saveObj = { ...DB, _appVersion: '7.0', _savedAt: new Date().toISOString() };
   const jsonStr = JSON.stringify(saveObj);
   try { localStorage.setItem('washnfold_db', jsonStr); } catch(e) {}
   if (window._fbSetData) window._fbSetData(jsonStr);
@@ -4957,7 +5299,7 @@ function suChangeManagerPassword() {
   if (newPass.length < 6) { showToast('Password must be at least 6 characters.', true); return; }
   DB.credentials.password = newPass;
   logActivity('Password Change', 'Super User changed Manager password');
-  const saveObj = { ...DB, _appVersion: '6.0', _savedAt: new Date().toISOString() };
+  const saveObj = { ...DB, _appVersion: '7.0', _savedAt: new Date().toISOString() };
   const jsonStr = JSON.stringify(saveObj);
   try { localStorage.setItem('washnfold_db', jsonStr); } catch(e) {}
   if (window._fbSetData) window._fbSetData(jsonStr);
@@ -5530,6 +5872,8 @@ function migrateRecord(r) {
     if (!out.date) out.date = '';
     if (!out.customer) out.customer = '';
     if (!out.month) out.month = '';
+    // V7: dateModified — default to date if missing (backward compat for old records)
+    if (!out.dateModified) out.dateModified = out.date || '';
   }
   // Invoice: ensure all expected fields
   if ('invoiceText' in out || 'collectionDate' in out) {
@@ -5540,6 +5884,8 @@ function migrateRecord(r) {
     if (!Array.isArray(out.items)) out.items = [];
     if (out.bagCost === undefined) out.bagCost = 0;
     if (out.bagIncluded === undefined) out.bagIncluded = true;
+    // V7: parcelingIncluded — default true for existing invoices
+    if (out.parcelingIncluded === undefined) out.parcelingIncluded = true;
     if (out.total === undefined) out.total = 0;
     // Migrate items: ensure all expected fields
     out.items = out.items.map(it => {
@@ -5579,26 +5925,50 @@ function migrateRecord(r) {
 // DATA PERSISTENCE — Firebase (cross-device) + localStorage (cache)
 // ══════════════════════════════════════════════════════════════════
 let _autoSaveTimer = null;
-function saveData() {
-  clearTimeout(_autoSaveTimer);
-  _autoSaveTimer = setTimeout(async () => {
-    try {
-      const saveObj = { ...DB, _appVersion: '6.0', _savedAt: new Date().toISOString() };
-      const jsonStr = JSON.stringify(saveObj);
-      localStorage.setItem('washnfold_db', jsonStr);
-      if (window._fbSetData) {
-        await window._fbSetData(jsonStr);
-      }
-      const ind = document.getElementById('autosave-indicator');
-      if (ind) { ind.style.opacity = '1'; setTimeout(() => { ind.style.opacity = '0'; }, 2000); }
-      const lsd = document.getElementById('last-saved-display');
-      if (lsd) lsd.textContent = new Date().toLocaleTimeString();
-    } catch(e) { console.warn('Auto-save failed:', e); }
-  }, 800);
+let _autoSaveTimer2 = null;
+function saveData(immediate) {
+  // Always save to localStorage immediately to prevent data loss on refresh
+  try {
+    const saveObjLocal = { ...DB, _appVersion: '7.0', _savedAt: new Date().toISOString() };
+    localStorage.setItem('washnfold_db', JSON.stringify(saveObjLocal));
+  } catch(e) { console.warn('LocalStorage save failed:', e); }
+
+  // For Firebase: immediate save for critical ops, debounced for minor ones
+  if (immediate) {
+    clearTimeout(_autoSaveTimer);
+    clearTimeout(_autoSaveTimer2);
+    _doCloudSave();
+  } else {
+    clearTimeout(_autoSaveTimer);
+    _autoSaveTimer = setTimeout(_doCloudSave, 800);
+  }
+}
+
+async function _doCloudSave() {
+  try {
+    const saveObj = { ...DB, _appVersion: '7.0', _savedAt: new Date().toISOString() };
+    const jsonStr = JSON.stringify(saveObj);
+    // localStorage is always written first (instant, never fails)
+    localStorage.setItem('washnfold_db', jsonStr);
+    // Then try Firebase (fire-and-forget — UI never waits)
+    if (window._fbSetData && !window._firebaseBlocked) {
+      window._fbSetData(jsonStr);
+    }
+    // Update save indicator
+    const ind = document.getElementById('autosave-indicator');
+    if (ind) {
+      ind.textContent = window._firebaseBlocked ? '💾 Saved locally' : '✓ Saved';
+      ind.style.color = window._firebaseBlocked ? 'var(--accent)' : 'var(--success)';
+      ind.style.opacity = '1';
+      setTimeout(() => { ind.style.opacity = '0'; }, 2500);
+    }
+    const lsd = document.getElementById('last-saved-display');
+    if (lsd) lsd.textContent = new Date().toLocaleTimeString();
+  } catch(e) {}
 }
 
 function exportDataBackup() {
-  const saveObj = { ...DB, _appVersion: '6.0', _savedAt: new Date().toISOString(),
+  const saveObj = { ...DB, _appVersion: '7.0', _savedAt: new Date().toISOString(),
     _schema: { invoiceFields: ['id','date','customerName','collectionDate','deliveryDate','items','total','paymentStatus','paidAmount','serviceTypes','invoiceText'],
                financeFields: ['id','customer','month','amount','paidAmount','status','paymentMethod','date','invoiceId'],
                deliveryFields: ['id','invoiceId','customer','serviceTypes','collectionDate','expectedDate','status','deliveredDate'] } };
@@ -5754,7 +6124,9 @@ function downloadPDF() {
   const washIronItems = currentInvoiceItems.filter(function(i){return i.service==='wash_iron';});
   const totalWO = washOnlyItems.reduce(function(s,i){return s+i.qty;},0);
   const totalWI = washIronItems.reduce(function(s,i){return s+i.qty;},0);
-  const parceling = totalWI*50;
+  // Respect the parceling-include checkbox
+  const _pdfParcelingOn = document.getElementById('parceling-include')?.checked ?? true;
+  const parceling = _pdfParcelingOn ? totalWI*50 : 0;
   // Safe bag cost read — _bagCost is only in scope right after generateInvoice()
   const _bagEl2 = document.getElementById('bag-include');
   const _pdfBagCost = (_bagEl2 && _bagEl2.checked)
@@ -5793,7 +6165,7 @@ function downloadPDF() {
   }
   if (washOnlyItems.length>0) renderGroup('Wash Only',washOnlyItems,totalWO);
   if (washIronItems.length>0) renderGroup('Wash and Iron',washIronItems,totalWI);
-  if (totalWI>0) {
+  if (totalWI>0 && _pdfParcelingOn) {
     checkY(14); hLine([200,205,215],0.4); y+=5;
     doc.setFontSize(9.5); doc.setFont('helvetica','bold'); doc.setTextColor(26,26,46);
     doc.text('Parceling Cost (50 FCFA per Wash & Iron item)', margin, y);
@@ -6023,6 +6395,185 @@ function exportDeliveryXLSX(exportAll = false) {
   XLSX.utils.book_append_sheet(wb, ws, 'Deliveries');
   XLSX.writeFile(wb, `WashnFold_Deliveries_${label}_${new Date().toISOString().split('T')[0]}.xlsx`);
   showToast(`Delivery Excel (${label}) downloaded ✓`);
+}
+
+function exportDeliveryPDF() {
+  if (!window.jspdf) { showToast('PDF library not loaded. Please wait and try again.', true); return; }
+  const { jsPDF } = window.jspdf;
+  const today = new Date(); today.setHours(0,0,0,0);
+  const active = window._filteredDeliveries || DB.deliveries.filter(d => d.status === 'pending');
+  if (active.length === 0) { showToast('No active deliveries to export.', true); return; }
+
+  const doc = new jsPDF({ unit:'mm', format:'a4', orientation:'landscape' });
+  const pageW = 297; const margin = 12; const cW = pageW - margin*2;
+  let y = 0;
+
+  function newPage() { doc.addPage(); y = 20; footer(); }
+  function checkY(n) { if (y + (n||8) > 193) newPage(); }
+  function footer() {
+    doc.setFontSize(7); doc.setFont('helvetica','normal'); doc.setTextColor(160,160,170);
+    doc.text("Washn' Fold — Active Deliveries Report", pageW/2, 200, {align:'center'});
+    doc.text(new Date().toLocaleDateString('en-GB',{day:'2-digit',month:'short',year:'numeric'}), pageW-margin, 200, {align:'right'});
+  }
+
+  // Header bar
+  doc.setFillColor(13,17,23); doc.rect(0,0,pageW,26,'F');
+  doc.setFillColor(232,197,71); doc.rect(0,0,pageW,2.5,'F');
+  doc.setFillColor(232,197,71); doc.rect(0,23.5,pageW,2.5,'F');
+  doc.setTextColor(232,197,71); doc.setFontSize(16); doc.setFont('helvetica','bold');
+  doc.text("WASHN' FOLD", pageW/2, 12, {align:'center'});
+  doc.setFontSize(8.5); doc.setFont('helvetica','normal'); doc.setTextColor(200,210,220);
+  doc.text('ACTIVE DELIVERIES REPORT  ·  Generated: ' + new Date().toLocaleString(), pageW/2, 19, {align:'center'});
+  y = 34;
+
+  // Stats row
+  const overdue = active.filter(d => Math.floor((today - new Date(d.collectionDate).setHours(0,0,0,0)) / 86400000) >= DB.settings.delMax).length;
+  const dueSoon = active.filter(d => { const ds = Math.floor((today - new Date(new Date(d.collectionDate).setHours(0,0,0,0))) / 86400000); return ds >= DB.settings.delMin && ds < DB.settings.delMax; }).length;
+  const inProg = active.length - overdue - dueSoon;
+  const statData = [
+    ['Total Active', active.length, [232,197,71]],
+    ['In Progress', inProg, [100,180,255]],
+    ['Due Now', dueSoon, [81,207,102]],
+    ['Overdue', overdue, [255,107,107]]
+  ];
+  statData.forEach((s, i) => {
+    const sx = margin + i * (cW/4);
+    doc.setFillColor(22,27,34); doc.roundedRect(sx, y, cW/4 - 3, 16, 1.5, 1.5, 'F');
+    doc.setFontSize(7); doc.setFont('helvetica','normal'); doc.setTextColor(s[2][0], s[2][1], s[2][2]);
+    doc.text(s[0], sx + 4, y + 6);
+    doc.setFontSize(14); doc.setFont('helvetica','bold');
+    doc.text(String(s[1]), sx + 4, y + 13);
+  });
+  y += 22;
+
+  // Table header
+  doc.setFillColor(26,32,44); doc.rect(margin, y, cW, 8, 'F');
+  doc.setFontSize(7.5); doc.setFont('helvetica','bold'); doc.setTextColor(255,255,255);
+  const colW2 = [8, 45, 30, 28, 28, 28, 30, 25, 51];
+  const headers = ['#','Customer','Service','Collected','Expected','Days','Status','Urgency','Notes'];
+  let cx2 = margin + 1.5;
+  headers.forEach((h, i) => { doc.text(h, cx2, y+5.5); cx2 += colW2[i]; });
+  y += 9;
+
+  // Table rows
+  active.forEach((d, idx) => {
+    checkY(7);
+    const collDate2 = new Date(d.collectionDate); collDate2.setHours(0,0,0,0);
+    const daysSince2 = Math.floor((today - collDate2) / 86400000);
+    let statusText, urgencyText, rowBg;
+    if (daysSince2 >= DB.settings.delMax) {
+      statusText = 'OVERDUE'; urgencyText = '⚠ URGENT'; rowBg = [80, 20, 20];
+    } else if (daysSince2 >= DB.settings.delMin) {
+      statusText = 'DUE NOW'; urgencyText = 'Ready'; rowBg = [20, 50, 30];
+    } else {
+      statusText = 'IN PROGRESS'; urgencyText = (DB.settings.delMin - daysSince2) + 'd left'; rowBg = null;
+    }
+    if (rowBg) { doc.setFillColor(rowBg[0], rowBg[1], rowBg[2]); doc.rect(margin, y, cW, 7, 'F'); }
+    else if (idx % 2 === 0) { doc.setFillColor(22,27,34); doc.rect(margin, y, cW, 7, 'F'); }
+    doc.setFontSize(7.5); doc.setFont('helvetica', daysSince2 >= DB.settings.delMax ? 'bold' : 'normal');
+    doc.setTextColor(daysSince2 >= DB.settings.delMax ? 255 : 220, daysSince2 >= DB.settings.delMax ? 107 : 230, daysSince2 >= DB.settings.delMax ? 107 : 240);
+    cx2 = margin + 1.5;
+    const cells = [
+      String(idx+1), d.customer, d.serviceTypes === 'wash_only' ? 'Wash' : d.serviceTypes === 'wash_iron' ? 'W+I' : 'Mixed',
+      d.collectionDate, d.expectedDate, daysSince2 + 'd', statusText, urgencyText, ''
+    ];
+    cells.forEach((cell, ci) => {
+      doc.text(String(cell).substring(0,ci===1?22:16), cx2, y + 4.8);
+      cx2 += colW2[ci];
+    });
+    y += 7;
+  });
+
+  y += 4; footer();
+  doc.save('WashnFold_Active_Deliveries_' + new Date().toISOString().split('T')[0] + '.pdf');
+  showToast('Delivery PDF downloaded ✓');
+}
+
+function exportDeptLivePDF(dept) {
+  if (!window.jspdf) { showToast('PDF library not loaded.', true); return; }
+  const { jsPDF } = window.jspdf;
+  const today = new Date(); today.setHours(0,0,0,0);
+  const preDays2 = parseFloat(DB.settings.preDays) || 1.5;
+  const postDays2 = parseFloat(DB.settings.postDays) || 1.5;
+  const active2 = DB.deliveries.filter(d => d.status === 'pending');
+
+  let items, deptName, accentColor;
+  if (dept === 'pre') {
+    items = active2.filter(d => {
+      const coll = new Date(d.collectionDate); coll.setHours(0,0,0,0);
+      const days = (today - coll) / 86400000;
+      return days >= preDays2 && days < preDays2 + postDays2;
+    });
+    deptName = 'Pre-Laundry Department';
+    accentColor = [78, 205, 196]; // teal
+  } else {
+    items = active2.filter(d => {
+      const coll = new Date(d.collectionDate); coll.setHours(0,0,0,0);
+      const days = (today - coll) / 86400000;
+      return days >= preDays2 + postDays2;
+    });
+    deptName = 'Post-Laundry Department';
+    accentColor = [249, 115, 22]; // orange
+  }
+
+  if (items.length === 0) { showToast('No items in this department.', true); return; }
+  items = [...items].sort((a, b) => new Date(a.collectionDate) - new Date(b.collectionDate));
+
+  const doc = new jsPDF({ unit:'mm', format:'a4' });
+  const pageW = 210; const margin = 15; const cW = pageW - margin*2;
+  let y = 0;
+
+  function footer2() {
+    doc.setFontSize(7); doc.setFont('helvetica','normal'); doc.setTextColor(160,160,170);
+    doc.text("Washn' Fold — " + deptName, pageW/2, 291, {align:'center'});
+    doc.text(new Date().toLocaleDateString('en-GB',{day:'2-digit',month:'short',year:'numeric'}), pageW-margin, 291, {align:'right'});
+  }
+
+  // Header
+  doc.setFillColor(13,17,23); doc.rect(0,0,pageW,30,'F');
+  doc.setFillColor(accentColor[0], accentColor[1], accentColor[2]); doc.rect(0,0,pageW,2.5,'F');
+  doc.setFillColor(accentColor[0], accentColor[1], accentColor[2]); doc.rect(0,27.5,pageW,2.5,'F');
+  doc.setTextColor(accentColor[0], accentColor[1], accentColor[2]); doc.setFontSize(14); doc.setFont('helvetica','bold');
+  doc.text("WASHN' FOLD", pageW/2, 12, {align:'center'});
+  doc.setFontSize(10); doc.setFont('helvetica','normal'); doc.setTextColor(200,210,220);
+  doc.text(deptName.toUpperCase(), pageW/2, 20, {align:'center'});
+  doc.setFontSize(8); doc.setTextColor(150,160,180);
+  doc.text('Snapshot: ' + new Date().toLocaleString(), pageW/2, 26, {align:'center'});
+  y = 40;
+
+  // Summary
+  doc.setFillColor(22,27,34); doc.roundedRect(margin, y, cW, 14, 2, 2, 'F');
+  doc.setFontSize(9); doc.setFont('helvetica','bold'); doc.setTextColor(accentColor[0], accentColor[1], accentColor[2]);
+  doc.text(items.length + ' items currently in ' + deptName, margin+4, y+9);
+  y += 20;
+
+  // Table header
+  doc.setFillColor(26,32,44); doc.rect(margin, y, cW, 8, 'F');
+  doc.setFontSize(7.5); doc.setFont('helvetica','bold'); doc.setTextColor(255,255,255);
+  const colW3 = [10, 58, 32, 28, 28, 24];
+  const hdrs = ['#','Customer','Service','Collected','Expected','Days'];
+  let cx3 = margin+1.5;
+  hdrs.forEach((h,i) => { doc.text(h, cx3, y+5.5); cx3 += colW3[i]; });
+  y += 9;
+
+  items.forEach((d, idx) => {
+    if (y + 7 > 278) { doc.addPage(); y = 20; footer2(); }
+    const coll = new Date(d.collectionDate); coll.setHours(0,0,0,0);
+    const days = Math.floor((today - coll) / 86400000);
+    if (idx % 2 === 0) { doc.setFillColor(22,27,34); doc.rect(margin, y, cW, 7, 'F'); }
+    doc.setFontSize(8); doc.setFont('helvetica','normal'); doc.setTextColor(210,220,235);
+    cx3 = margin+1.5;
+    [String(idx+1), d.customer, d.serviceTypes==='wash_only'?'Wash Only':d.serviceTypes==='wash_iron'?'Wash & Iron':'Mixed',
+      d.collectionDate, d.expectedDate, days+'d'].forEach((cell, ci) => {
+      doc.text(String(cell).substring(0,ci===1?28:15), cx3, y+4.8);
+      cx3 += colW3[ci];
+    });
+    y += 7;
+  });
+
+  y += 6; footer2();
+  doc.save('WashnFold_' + dept.toUpperCase() + '_Dept_' + new Date().toISOString().split('T')[0] + '.pdf');
+  showToast(deptName + ' PDF downloaded ✓');
 }
 
 
