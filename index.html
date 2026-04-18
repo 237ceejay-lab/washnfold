@@ -500,47 +500,6 @@ body.mobile-view .card-title-row { flex-direction: column; align-items: flex-sta
 .activity-item { padding:0.6rem 0; border-bottom:1px solid var(--border); font-size:0.82rem; }
 .activity-item .act-time { font-size:0.7rem; color:var(--muted); font-family:'DM Mono',monospace; }
 </style>
-<!-- PWA: Makes app installable as desktop/phone app (no extra files needed) -->
-<meta name="mobile-web-app-capable" content="yes">
-<meta name="apple-mobile-web-app-capable" content="yes">
-<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
-<meta name="apple-mobile-web-app-title" content="Washn Fold">
-<meta name="application-name" content="Washn Fold">
-<meta name="theme-color" content="#0d1117">
-<link rel="apple-touch-icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 192 192'%3E%3Crect width='192' height='192' rx='32' fill='%230d1117'/%3E%3Ctext x='96' y='130' text-anchor='middle' font-size='110' font-family='serif'%3E%F0%9F%AB%A7%3C/text%3E%3C/svg%3E">
-
-<!-- Inline Web App Manifest via data URI — no separate manifest.json file needed -->
-<link rel="manifest" href="data:application/manifest+json,%7B%22name%22%3A%22Washn%27+Fold+Management%22%2C%22short_name%22%3A%22Washn+Fold%22%2C%22description%22%3A%22Washn%27+Fold+Laundry+Service+Management+System%22%2C%22start_url%22%3A%22.%2F%22%2C%22display%22%3A%22standalone%22%2C%22background_color%22%3A%22%230d1117%22%2C%22theme_color%22%3A%22%230d1117%22%2C%22orientation%22%3A%22any%22%2C%22icons%22%3A%5B%7B%22src%22%3A%22data%3Aimage%2Fsvg%2Bxml%2C%253Csvg+xmlns%3D%27http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%27+viewBox%3D%270+0+192+192%27%253E%253Crect+width%3D%27192%27+height%3D%27192%27+rx%3D%2732%27+fill%3D%27%25230d1117%27%2F%253E%253Ctext+x%3D%2796%27+y%3D%27130%27+text-anchor%3D%27middle%27+font-size%3D%27110%27%253E%25F0%259F%25AB%25A7%253C%2Ftext%253E%253C%2Fsvg%253E%22%2C%22sizes%22%3A%22192x192%22%2C%22type%22%3A%22image%2Fsvg%2Bxml%22%7D%5D%7D">
-
-<script>
-// PWA install prompt — no service worker needed (app already works offline via localStorage).
-// A blob: URL service worker is blocked by browsers (wrong origin scope), so we skip it.
-var _pwaInstallPrompt = null;
-window.addEventListener('beforeinstallprompt', function(e) {
-  e.preventDefault();
-  _pwaInstallPrompt = e;
-  setTimeout(function() {
-    var btn = document.getElementById('pwa-install-btn');
-    if (btn) btn.style.display = '';
-  }, 2000);
-});
-window.addEventListener('appinstalled', function() {
-  var btn = document.getElementById('pwa-install-btn');
-  if (btn) btn.style.display = 'none';
-  _pwaInstallPrompt = null;
-});
-function installPWA() {
-  if (!_pwaInstallPrompt) return;
-  _pwaInstallPrompt.prompt();
-  _pwaInstallPrompt.userChoice.then(function(result) {
-    if (result.outcome === 'accepted') {
-      var btn = document.getElementById('pwa-install-btn');
-      if (btn) btn.style.display = 'none';
-    }
-    _pwaInstallPrompt = null;
-  });
-}
-</script>
 </head>
 <body>
 
@@ -606,7 +565,6 @@ function installPWA() {
         🔔<span class="notif-badge" id="notif-count">0</span>
       </div>
       <span id="autosave-indicator" style="font-family:'DM Mono',monospace;font-size:0.68rem;color:var(--success);opacity:0;transition:opacity 1.2s;">✓ Saved</span>
-      <button id="pwa-install-btn" onclick="installPWA()" title="Install as desktop or phone app" style="display:none;background:rgba(162,155,254,0.12);border:1px solid rgba(162,155,254,0.4);border-radius:20px;padding:0.3rem 0.8rem;font-size:0.72rem;color:var(--purple);cursor:pointer;font-family:'DM Mono',monospace;transition:all 0.2s;" onmouseover="this.style.background='rgba(162,155,254,0.22)'" onmouseout="this.style.background='rgba(162,155,254,0.12)'">⬇ Install App</button>
       <span id="online-users-badge" title="Users currently logged in" style="display:none;background:rgba(81,207,102,0.1);border:1px solid rgba(81,207,102,0.3);border-radius:20px;padding:0.25rem 0.6rem;font-size:0.68rem;color:var(--success);font-family:'DM Mono',monospace;cursor:default;">🟢 1 online</span>
       <button class="btn btn-sm btn-danger" onclick="confirmLogout()" id="logout-btn">🔒 Logout</button>
     </div>
@@ -2000,6 +1958,7 @@ function doLogin() {
 
   if (matched) {
     errEl.style.display = 'none';
+    _loadSeedData();
     logActivity('Login', `Logged in as ${currentAccountType}`);
     document.getElementById('login-form').style.display = 'none';
     document.getElementById('login-import-prompt').style.display = 'block';
@@ -6717,9 +6676,12 @@ function downloadCSV(rows, filename) {
 }
 
 // ══════════════════════════════════════════════════════════════════
-// PRELOAD FINANCIAL DATA FROM XLSX (938 records from uploaded file)
+// PRELOAD FINANCIAL DATA — loaded after login (not at parse time)
 // ══════════════════════════════════════════════════════════════════
-const seedFinance = [
+function _loadSeedData() {
+  if (window._seedLoaded) return;
+  window._seedLoaded = true;
+  const seedFinance = [
   {id:'fin_seed_1',customer:"Tessa",month:'May',amount:11750,paidAmount:11750,status:'paid',paymentMethod:"Mobile Money",date:'2024-05-01'},
   {id:'fin_seed_2',customer:"Duchess",month:'May',amount:10200,paidAmount:10200,status:'paid',paymentMethod:"Mobile Money",date:'2024-05-01'},
   {id:'fin_seed_3',customer:"Faith",month:'May',amount:6800,paidAmount:6800,status:'paid',paymentMethod:"Mobile Money",date:'2024-05-01'},
@@ -7658,12 +7620,12 @@ const seedFinance = [
   {id:'fin_seed_936',customer:"Celes Friend",month:'February',amount:11000,paidAmount:0,status:'unpaid',paymentMethod:"-",date:'2025-02-01'},
   {id:'fin_seed_937',customer:"Mrs Lah",month:'February',amount:43650,paidAmount:0,status:'unpaid',paymentMethod:"-",date:'2025-02-01'},
   {id:'fin_seed_938',customer:"Mme Bruno",month:'February',amount:24200,paidAmount:24200,status:'paid',paymentMethod:"Mobile Money",date:'2025-02-01'}
-]
-seedFinance.forEach(r => {
-  if (!DB.finance.find(f => f.id === r.id)) DB.finance.push(r);
-  if (!DB.customerHistory[r.customer]) DB.customerHistory[r.customer] = { lastService:'wash_only', lastDate: r.date };
-});
-
+];
+  seedFinance.forEach(r => {
+    if (!DB.finance.find(f => f.id === r.id)) DB.finance.push(r);
+    if (!DB.customerHistory[r.customer]) DB.customerHistory[r.customer] = { lastService:'wash_only', lastDate: r.date };
+  });
+}
 // ── Populate item-select from prices
 document.addEventListener('DOMContentLoaded', () => {
   const sel = document.getElementById('item-select');
