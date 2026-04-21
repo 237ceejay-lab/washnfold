@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Washn' Fold — Management System V11</title>
+<title>Washn' Fold — Management System V12</title>
 
 <!-- Fonts: try Google Fonts first, fall back to system fonts gracefully on blocked networks -->
 <!-- Fonts loaded non-blocking — page renders instantly even if fonts.googleapis.com
@@ -563,7 +563,7 @@ body.mobile-view .card-title-row { flex-direction: column; align-items: flex-sta
   <div class="login-box">
     <div style="font-family:'DM Mono',monospace;font-size:0.7rem;letter-spacing:0.3em;color:var(--accent);margin-bottom:0.5rem;">✦ WASHN' FOLD</div>
     <h1>Management</h1>
-    <p class="sub">Laundry Service Software v11.0</p>
+    <p class="sub">Laundry Service Software v12.0</p>
     <div id="login-form">
       <div class="form-group" style="margin-bottom:1rem;text-align:left;">
         <label>Username</label>
@@ -1640,7 +1640,7 @@ body.mobile-view .card-title-row { flex-direction: column; align-items: flex-sta
     </div>
     <div class="card" style="margin-bottom:1rem;background:rgba(78,205,196,0.05);border-color:rgba(78,205,196,0.25);">
       <div style="font-size:0.82rem;color:var(--muted);line-height:1.7;">
-        🔒 <b style="color:var(--text);">Super User only</b> (unless delegated). Auto-saves a complete JSON backup on your <b style="color:var(--text);">first logout of each day</b>. These logs are <b style="color:var(--accent);">permanent</b> — never auto-deleted. Up to 90 days stored.<br>
+        🔒 <b style="color:var(--text);">Super User only</b> (unless delegated). Auto-saves a complete JSON backup at the configured logout interval — see <b style="color:var(--purple);">⏱ Auto-Download Controls</b> in the Super User panel. These logs are <b style="color:var(--accent);">permanent</b> — never auto-deleted. Up to 90 days stored.<br>
         <b style="color:var(--success);">⬇ Download</b> to device · <b style="color:var(--accent2);">↩ Import</b> to restore · <b style="color:var(--danger);">✕</b> to delete entry.
       </div>
     </div>
@@ -1772,6 +1772,66 @@ body.mobile-view .card-title-row { flex-direction: column; align-items: flex-sta
       </div>
     </div>
     <div id="su-audit-log-list" style="max-height:500px;overflow-y:auto;"></div>
+  </div>
+
+  <!-- ══ AUTO-DOWNLOAD CONTROLS ══ -->
+  <div class="card" style="border-color:rgba(162,155,254,0.4);background:rgba(162,155,254,0.04);">
+    <div class="card-title" style="color:var(--purple);">▸ ⏱ Auto-Download Controls</div>
+    <p style="font-size:0.82rem;color:var(--muted);margin-bottom:1.2rem;line-height:1.7;">
+      Control <b style="color:var(--text);">how often</b> backups are downloaded and <b style="color:var(--text);">which accounts</b> trigger them.
+      Two separate download channels exist:<br>
+      <span style="color:var(--accent2);">① In-App Downloads Folder</span> — saved at logout, stored in the app.<br>
+      <span style="color:var(--accent);">② Local Device Download</span> — file directly downloaded to the device's storage.
+    </p>
+
+    <!-- In-App Folder interval -->
+    <div style="background:rgba(78,205,196,0.06);border:1px solid rgba(78,205,196,0.25);border-radius:10px;padding:1rem;margin-bottom:1rem;">
+      <div style="font-family:'DM Mono',monospace;font-size:0.68rem;letter-spacing:0.15em;text-transform:uppercase;color:var(--accent2);margin-bottom:0.7rem;">📂 In-App Downloads Folder — Save Interval</div>
+      <div class="form-row">
+        <div class="form-group">
+          <label>Save interval</label>
+          <select id="su-inapp-interval">
+            <option value="6">Every 6 hours</option>
+            <option value="12">Every 12 hours</option>
+            <option value="24">Every 24 hours (daily) — default</option>
+            <option value="48">Every 2 days</option>
+            <option value="72">Every 3 days</option>
+          </select>
+        </div>
+        <div class="form-group">
+          <label>Which accounts trigger in-app save?</label>
+          <div id="su-inapp-accounts" style="display:flex;flex-direction:column;gap:0.4rem;margin-top:0.3rem;"></div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Local device download interval -->
+    <div style="background:rgba(232,197,71,0.06);border:1px solid rgba(232,197,71,0.25);border-radius:10px;padding:1rem;margin-bottom:1rem;">
+      <div style="font-family:'DM Mono',monospace;font-size:0.68rem;letter-spacing:0.15em;text-transform:uppercase;color:var(--accent);margin-bottom:0.7rem;">⬇ Local Device Download — Save Interval</div>
+      <div class="form-row">
+        <div class="form-group">
+          <label>Download interval</label>
+          <select id="su-local-interval">
+            <option value="6">Every 6 hours</option>
+            <option value="12">Every 12 hours</option>
+            <option value="24">Every 24 hours (daily) — default</option>
+            <option value="48">Every 2 days</option>
+            <option value="72">Every 3 days</option>
+            <option value="168">Every 7 days (weekly)</option>
+          </select>
+        </div>
+        <div class="form-group">
+          <label>Which accounts trigger local download?</label>
+          <div id="su-local-accounts" style="display:flex;flex-direction:column;gap:0.4rem;margin-top:0.3rem;"></div>
+        </div>
+      </div>
+      <p style="font-size:0.75rem;color:var(--muted);margin-top:0.5rem;line-height:1.5;">
+        ⚠ Local downloads only trigger when EmailJS is configured and active. The fallback (mailto) also respects this interval.
+      </p>
+    </div>
+
+    <button class="btn btn-primary" onclick="saveAutoDownloadSettings()">💾 Save Auto-Download Settings</button>
+    <div id="su-autodl-status" style="font-size:0.75rem;font-family:'DM Mono',monospace;color:var(--success);margin-top:0.6rem;display:none;"></div>
   </div>
 
   <!-- Downloads Folder quick link -->
@@ -2001,7 +2061,11 @@ let DB = {
     emailjsTemplateId: '',
     lastLogSentAt: null,
     lastDailyLogDate: null,  // track which calendar date we last did first-logout download
-    downloadsAccessList: []  // accountIds delegated download-folder access by super user
+    downloadsAccessList: [],  // accountIds delegated download-folder access by super user
+    localDownloadIntervalHours: 24,
+    inAppDownloadIntervalHours: 24,
+    autoDownloadAccounts: ["superuser","manager","admin"],
+    autoDownloadLocalAccounts: ["superuser","manager","admin"]
   },
   prices: {
     light_dresses:     { label:'Light Dresses',               wo_colored:100, wo_white:150, wi_colored_casual:200, wi_colored_formal:250, wi_white:250 },
@@ -2074,50 +2138,48 @@ function doLogin() {
         DB.adminAccounts = parsed.adminAccounts;
       }
     }
-  } catch(e) { /* silent — if this fails we fall through to credential check with defaults */ }
+  } catch(e) { /* silent */ }
 
-  let matched = false;
-
-  // 1. Check Super User
-  if (u === DB.superUserCredentials.username && p === DB.superUserCredentials.password) {
-    currentAccountType = 'superuser';
-    currentAccountUsername = u;
-    currentAdminAccountId = null;
-    matched = true;
+  // ── ATTEMPT CREDENTIAL CHECK (local first, then Firebase) ────────
+  // _doLoginCheck() tries immediately from localStorage. If it fails AND
+  // Firebase is available, it fetches the latest credentials from Firebase
+  // and retries — so admin/staff accounts work on any device, even if this
+  // device has never been used before (empty localStorage).
+  function _mergeCredsFromParsed(parsed) {
+    if (!parsed || typeof parsed !== 'object') return;
+    if (parsed.credentials && typeof parsed.credentials === 'object')
+      Object.assign(DB.credentials, parsed.credentials);
+    if (parsed.superUserCredentials && typeof parsed.superUserCredentials === 'object')
+      Object.assign(DB.superUserCredentials, parsed.superUserCredentials);
+    if (parsed.adminCredentials && typeof parsed.adminCredentials === 'object')
+      Object.assign(DB.adminCredentials, parsed.adminCredentials);
+    if (Array.isArray(parsed.adminAccounts))
+      DB.adminAccounts = parsed.adminAccounts;
   }
 
-  // 2. Check Manager
-  if (!matched && u === DB.credentials.username && p === DB.credentials.password) {
-    currentAccountType = 'manager';
-    currentAccountUsername = u;
-    currentAdminAccountId = null;
-    matched = true;
-  }
-
-  // 3. Check all admin/staff accounts (including newly created ones)
-  if (!matched) {
+  function _checkCredentials(u, p) {
+    // 1. Super User
+    if (u === DB.superUserCredentials.username && p === DB.superUserCredentials.password)
+      return { type: 'superuser', id: null };
+    // 2. Manager
+    if (u === DB.credentials.username && p === DB.credentials.password)
+      return { type: 'manager', id: null };
+    // 3. Admin/staff accounts
     const acct = (DB.adminAccounts || []).find(a => !a.suspended && a.username === u && a.password === p);
-    if (acct) {
-      currentAccountType = 'admin';
-      currentAccountUsername = u;
-      currentAdminAccountId = acct.id;
-      matched = true;
-    }
+    if (acct) return { type: 'admin', id: acct.id };
+    // 4. Legacy single admin fallback
+    if (u === DB.adminCredentials.username && p === DB.adminCredentials.password)
+      return { type: 'admin', id: 'legacy' };
+    return null;
   }
 
-  // 4. Legacy single admin fallback
-  if (!matched && u === DB.adminCredentials.username && p === DB.adminCredentials.password) {
-    currentAccountType = 'admin';
+  function _proceedWithMatch(match) {
+    currentAccountType     = match.type;
     currentAccountUsername = u;
-    currentAdminAccountId = 'legacy';
-    matched = true;
-  }
-
-  if (matched) {
+    currentAdminAccountId  = match.id;
     errEl.style.display = 'none';
     _loadSeedData();
     logActivity('Login', `Logged in as ${currentAccountType}`);
-    // Persist session so refresh doesn't log out
     try {
       sessionStorage.setItem('washnfold_session', JSON.stringify({
         accountType: currentAccountType,
@@ -2128,11 +2190,51 @@ function doLogin() {
     document.getElementById('login-form').style.display = 'none';
     document.getElementById('login-import-prompt').style.display = 'block';
     loadCloudDataAndProceed();
-  } else {
+  }
+
+  function _failLogin() {
     errEl.textContent = 'Invalid credentials. Please check your username and password.';
     errEl.style.display = 'block';
+    // Re-enable login button if it was disabled
+    const loginBtn = document.querySelector('#login-form .btn-primary');
+    if (loginBtn) { loginBtn.disabled = false; loginBtn.textContent = '🔐 Login'; }
     logActivityAnon('Failed Login', `Failed login attempt for username: ${u}`);
   }
+
+  // First attempt — from localStorage / in-memory DB
+  const localMatch = _checkCredentials(u, p);
+  if (localMatch) { _proceedWithMatch(localMatch); return; }
+
+  // Second attempt — fetch from Firebase (handles new device with empty localStorage)
+  // Show a subtle "checking..." state so the user knows the app is working
+  const loginBtn = document.querySelector('#login-form .btn-primary');
+  if (loginBtn) { loginBtn.disabled = true; loginBtn.textContent = '🔄 Checking...'; }
+
+  // Wait for Firebase to be ready (it may still be loading on a fresh device)
+  const _maxWait = 4000;
+  const _start   = Date.now();
+  function _waitAndFetch() {
+    if (!window._firebaseReady && Date.now() - _start < _maxWait) {
+      setTimeout(_waitAndFetch, 150);
+      return;
+    }
+    if (window._firebaseBlocked || !window._fbGetData) {
+      // Firebase unavailable — local check already failed → show error
+      _failLogin(); return;
+    }
+    window._fbGetData().then(function(rawData) {
+      if (rawData) {
+        try { _mergeCredsFromParsed(JSON.parse(rawData)); } catch(e) {}
+      }
+      const firebaseMatch = _checkCredentials(u, p);
+      if (firebaseMatch) {
+        _proceedWithMatch(firebaseMatch);
+      } else {
+        _failLogin();
+      }
+    }).catch(function() { _failLogin(); });
+  }
+  _waitAndFetch();
 }
 
 // ── Screen management ──────────────────────────────────────────────
@@ -2329,6 +2431,15 @@ function mergeLoadedData(loaded) {
     if (!Array.isArray(DB.settings.downloadsAccessList)) DB.settings.downloadsAccessList = [];
     if (DB.settings.lastDailyLogDate === undefined) DB.settings.lastDailyLogDate = null;
     if (DB.settings.inactivityMins === undefined) DB.settings.inactivityMins = 5;
+    // ── v12 migration: auto-download controls ────────────────────────
+    if (typeof DB.settings.localDownloadIntervalHours !== 'number' || DB.settings.localDownloadIntervalHours < 1)
+      DB.settings.localDownloadIntervalHours = 24;
+    if (typeof DB.settings.inAppDownloadIntervalHours !== 'number' || DB.settings.inAppDownloadIntervalHours < 1)
+      DB.settings.inAppDownloadIntervalHours = 24;
+    if (!Array.isArray(DB.settings.autoDownloadAccounts))
+      DB.settings.autoDownloadAccounts = ['superuser','manager','admin'];
+    if (!Array.isArray(DB.settings.autoDownloadLocalAccounts))
+      DB.settings.autoDownloadLocalAccounts = ['superuser','manager','admin'];
   }
 
   if (loaded.adminPermissions && typeof loaded.adminPermissions === 'object') {
@@ -2381,17 +2492,40 @@ function confirmLogout(isAuto) {
   if (btn) { btn.textContent = '⏳ Saving...'; btn.disabled = true; }
 
   // ── Step 1: Synchronous localStorage save (instant, never fails) ──
-  const saveObj = { ...DB, _appVersion: '9.0', _savedAt: new Date().toISOString() };
+  const saveObj = { ...DB, _appVersion: '12.0', _savedAt: new Date().toISOString() };
   const jsonStr = JSON.stringify(saveObj);
   try { localStorage.setItem('washnfold_db', jsonStr); } catch(e) {}
 
-  // ── Step 2: First-logout-of-day: save log to in-app Downloads folder ──
-  const todayStr = new Date().toISOString().split('T')[0];
-  if (DB.settings.lastDailyLogDate !== todayStr) {
-    DB.settings.lastDailyLogDate = todayStr;
-    _saveLogToDownloadsFolder();
-    // Re-save with updated lastDailyLogDate
-    try { localStorage.setItem('washnfold_db', JSON.stringify({ ...DB, _appVersion: '9.0', _savedAt: new Date().toISOString() })); } catch(e) {}
+  // ── Step 2: Scheduled logout: save log to in-app Downloads folder ──
+  // Respects inAppDownloadIntervalHours and autoDownloadAccounts settings.
+  const _inAppAccts = DB.settings.autoDownloadAccounts || ['superuser','manager','admin'];
+  const _inAppAllowed = _inAppAccts.includes(currentAccountType);
+  if (_inAppAllowed) {
+    const _inAppIntervalHours = (typeof DB.settings.inAppDownloadIntervalHours === 'number' && DB.settings.inAppDownloadIntervalHours >= 1)
+      ? DB.settings.inAppDownloadIntervalHours : 24;
+    const _lastSave = DB.settings.lastDailyLogDate ? new Date(DB.settings.lastDailyLogDate) : null;
+    // For intervals ≥ 24h we compare calendar dates; for sub-day intervals we compare timestamps
+    let _shouldSave = false;
+    if (_inAppIntervalHours < 24) {
+      // Sub-day: use actual elapsed hours
+      const _elapsed = _lastSave ? (Date.now() - _lastSave.getTime()) / 3600000 : Infinity;
+      _shouldSave = _elapsed >= _inAppIntervalHours;
+    } else {
+      // Daily+: compare date strings (first logout of each qualifying day)
+      const _intervalDays = Math.floor(_inAppIntervalHours / 24);
+      if (!_lastSave) {
+        _shouldSave = true;
+      } else {
+        const _daysSince = (Date.now() - _lastSave.getTime()) / 86400000;
+        _shouldSave = _daysSince >= _intervalDays;
+      }
+    }
+    if (_shouldSave) {
+      DB.settings.lastDailyLogDate = new Date().toISOString();
+      _saveLogToDownloadsFolder();
+      // Re-save with updated lastDailyLogDate
+      try { localStorage.setItem('washnfold_db', JSON.stringify({ ...DB, _appVersion: '12.0', _savedAt: new Date().toISOString() })); } catch(e) {}
+    }
   }
 
   // ── Step 3: Fire Firebase save in background (don't wait — 800ms timeout) ──
@@ -2435,7 +2569,7 @@ function initEmailJS() {
 function buildFullBackupBlob() {
   const saveObj = {
     ...DB,
-    _appVersion: '9.0',
+    _appVersion: '12.0',
     _savedAt: new Date().toISOString(),
     _type: 'full_backup'
   };
@@ -2521,16 +2655,22 @@ function scheduleDailyEmail() {
   if (!isEmailJSConfigured()) return;
 
   const checkAndSend = async () => {
+    // Respect per-account local-download setting
+    const localAccts = DB.settings.autoDownloadLocalAccounts || ['superuser','manager','admin'];
+    const localAllowed = localAccts.includes(currentAccountType);
+
     const last = DB.settings.lastLogSentAt ? new Date(DB.settings.lastLogSentAt) : null;
+    const intervalHours = (typeof DB.settings.localDownloadIntervalHours === 'number' && DB.settings.localDownloadIntervalHours >= 1)
+      ? DB.settings.localDownloadIntervalHours : 24;
     const hoursSinceLast = last ? (Date.now() - last.getTime()) / 3600000 : Infinity;
-    if (hoursSinceLast >= 24) {
-      const filename = autoDownloadBackup();           // 1. Download full backup to device
-      const ok = await sendLogViaEmailJS('Daily Backup & Log');  // 2. Send summary email
+    if (hoursSinceLast >= intervalHours) {
+      const filename = localAllowed ? autoDownloadBackup() : null; // 1. Download to device (if account allowed)
+      const ok = await sendLogViaEmailJS('Scheduled Backup & Log');  // 2. Send summary email
       if (ok) {
-        showToast('Daily backup downloaded & email sent');
+        showToast(localAllowed ? 'Scheduled backup downloaded & email sent' : 'Scheduled email sent');
         updateEmailStatusUI();
       } else if (filename) {
-        showToast('Daily backup downloaded (email failed)');
+        showToast('Scheduled backup downloaded (email failed)');
       }
     }
   };
@@ -2543,14 +2683,21 @@ function stopDailyEmailScheduler() {
   if (_dailyEmailTimer) { clearInterval(_dailyEmailTimer); _dailyEmailTimer = null; }
 }
 
-// ── Fallback (EmailJS not set up): backup download + mailto every 3.5 days at logout ──
+// ── Fallback (EmailJS not set up): backup download + mailto at configured interval ──
 function maybeSendFallbackLog() {
   const last = DB.settings.lastLogSentAt ? new Date(DB.settings.lastLogSentAt) : null;
+  const intervalHours = (typeof DB.settings.localDownloadIntervalHours === 'number' && DB.settings.localDownloadIntervalHours >= 1)
+    ? DB.settings.localDownloadIntervalHours : 24;
+  // Fallback uses 3.5× the configured interval, minimum 3.5 days, maximum 7 days
+  const fallbackDays = Math.min(7, Math.max(3.5, (intervalHours * 3.5) / 24));
   const daysSinceLast = last ? (Date.now() - last.getTime()) / 86400000 : Infinity;
-  if (daysSinceLast < 3.5) return;
+  if (daysSinceLast < fallbackDays) return;
+
+  const localAccts = DB.settings.autoDownloadLocalAccounts || ['superuser','manager','admin'];
+  const localAllowed = localAccts.includes(currentAccountType);
 
   try {
-    const filename = autoDownloadBackup();   // Full importable backup always downloaded
+    const filename = localAllowed ? autoDownloadBackup() : null;   // Full importable backup downloaded if allowed
     const payload  = buildEmailSummary('Session Backup & Log');
     const email    = DB.settings.logEmail || '237ceejay@gmail.com';
     setTimeout(() => {
@@ -2586,11 +2733,16 @@ function updateEmailStatusUI() {
   const dailyEl = document.getElementById('su-daily-status');
   const lastEl  = document.getElementById('su-last-sent');
   if (dailyEl) {
+    const localH  = DB.settings.localDownloadIntervalHours || 24;
+    const inAppH  = DB.settings.inAppDownloadIntervalHours || 24;
+    const localAc = (DB.settings.autoDownloadLocalAccounts || ['superuser','manager','admin']).join(', ');
+    const inAppAc = (DB.settings.autoDownloadAccounts      || ['superuser','manager','admin']).join(', ');
     if (isEmailJSConfigured()) {
-      dailyEl.textContent = 'Daily auto backup + email: ACTIVE - sends every 24 hours (backup downloaded to device + email summary sent)';
+      dailyEl.textContent = `Auto backup + email: ACTIVE — local device every ${localH}h (${localAc}) · in-app folder every ${inAppH}h (${inAppAc})`;
       dailyEl.style.color = 'var(--success)';
     } else {
-      dailyEl.textContent = 'Auto-email INACTIVE. Configure EmailJS above for daily automatic sending. Fallback active: backup download + mailto every 3.5 days at logout.';
+      const fallbackDays = Math.min(7, Math.max(3.5, (localH * 3.5) / 24)).toFixed(1);
+      dailyEl.textContent = `Auto-email INACTIVE. Configure EmailJS above for automatic sending. Fallback: backup download + mailto every ~${fallbackDays} days at logout (for: ${localAc}).`;
       dailyEl.style.color = 'var(--accent)';
     }
   }
@@ -4507,7 +4659,7 @@ function _saveLogToDownloadsFolder() {
   const filename = 'WashnFold_Log_' + ts.slice(0,10) + '_' + String(now.getHours()).padStart(2,'0') + 'h' + String(now.getMinutes()).padStart(2,'0') + '.json';
   const logData = {
     _type: 'app_log_backup',
-    _appVersion: '9.0',
+    _appVersion: '12.0',
     _savedAt: ts,
     _savedBy: currentAccountUsername || 'system',
     _savedByType: currentAccountType || 'unknown',
@@ -4539,16 +4691,19 @@ function _saveLogToDownloadsFolder() {
   });
   // Keep up to 90 entries in-app (3 months of daily logs)
   if (DB.appDownloads.length > 90) DB.appDownloads = DB.appDownloads.slice(0, 90);
-  // Also trigger device download
-  try {
-    const blob = new Blob([json], { type: 'application/json' });
-    const a = document.createElement('a');
-    a.href = URL.createObjectURL(blob);
-    a.download = filename;
-    document.body.appendChild(a);
-    a.click();
-    setTimeout(() => { try { document.body.removeChild(a); URL.revokeObjectURL(a.href); } catch(e){} }, 3000);
-  } catch(e) {}
+  // Also trigger device download — only if this account type is allowed for local downloads
+  const _localDlAccts = DB.settings.autoDownloadLocalAccounts || ['superuser','manager','admin'];
+  if (_localDlAccts.includes(currentAccountType)) {
+    try {
+      const blob = new Blob([json], { type: 'application/json' });
+      const a = document.createElement('a');
+      a.href = URL.createObjectURL(blob);
+      a.download = filename;
+      document.body.appendChild(a);
+      a.click();
+      setTimeout(() => { try { document.body.removeChild(a); URL.revokeObjectURL(a.href); } catch(e){} }, 3000);
+    } catch(e) {}
+  }
 }
 
 function manualSaveToDownloads() {
@@ -4605,7 +4760,7 @@ function renderDownloadsFolder() {
     el.innerHTML = `<div class="empty-state" style="padding:3rem;">
       <div class="icon" style="font-size:2.5rem;">📂</div>
       <div style="margin-top:0.5rem;">No logs saved yet.</div>
-      <div style="font-size:0.78rem;color:var(--muted);margin-top:0.3rem;">Logs are auto-saved on your first logout of each day, or click <b>💾 Save Log Now</b> above.</div>
+      <div style="font-size:0.78rem;color:var(--muted);margin-top:0.3rem;">Logs are auto-saved at the configured interval (currently every ${DB.settings.inAppDownloadIntervalHours || 24}h), or click <b>💾 Save Log Now</b> above.</div>
     </div>`;
     return;
   }
@@ -6253,6 +6408,97 @@ function loadSuEmailSettings() {
   if (serviceEl) serviceEl.value = DB.settings.emailjsServiceId || '';
   if (templateEl) templateEl.value = DB.settings.emailjsTemplateId || '';
   updateEmailStatusUI();
+  loadAutoDownloadSettingsUI();
+}
+
+// ══════════════════════════════════════════════════════════════════
+// AUTO-DOWNLOAD CONTROLS — UI load/save
+// ══════════════════════════════════════════════════════════════════
+function loadAutoDownloadSettingsUI() {
+  const ACCOUNT_OPTS = [
+    { value: 'superuser', label: '👑 Super User' },
+    { value: 'manager',   label: '👤 Manager'    },
+    { value: 'admin',     label: '🔧 Admin/Staff' }
+  ];
+
+  // In-app interval
+  const inAppSel = document.getElementById('su-inapp-interval');
+  if (inAppSel) {
+    const v = String(DB.settings.inAppDownloadIntervalHours || 24);
+    // Set value; if not in list, add it
+    let found = false;
+    Array.from(inAppSel.options).forEach(o => { if (o.value === v) { o.selected = true; found = true; } });
+    if (!found) { const opt = document.createElement('option'); opt.value = v; opt.textContent = `Every ${v} hours (custom)`; opt.selected = true; inAppSel.appendChild(opt); }
+  }
+
+  // Local device interval
+  const localSel = document.getElementById('su-local-interval');
+  if (localSel) {
+    const v = String(DB.settings.localDownloadIntervalHours || 24);
+    let found = false;
+    Array.from(localSel.options).forEach(o => { if (o.value === v) { o.selected = true; found = true; } });
+    if (!found) { const opt = document.createElement('option'); opt.value = v; opt.textContent = `Every ${v} hours (custom)`; opt.selected = true; localSel.appendChild(opt); }
+  }
+
+  // In-app accounts checkboxes
+  const inAppAcctEl = document.getElementById('su-inapp-accounts');
+  if (inAppAcctEl) {
+    const enabled = DB.settings.autoDownloadAccounts || ['superuser','manager','admin'];
+    inAppAcctEl.innerHTML = ACCOUNT_OPTS.map(opt =>
+      `<label style="display:flex;align-items:center;gap:0.5rem;font-size:0.83rem;cursor:pointer;">
+        <input type="checkbox" value="${opt.value}" ${enabled.includes(opt.value) ? 'checked' : ''} style="cursor:pointer;">
+        ${opt.label}
+      </label>`
+    ).join('');
+  }
+
+  // Local accounts checkboxes
+  const localAcctEl = document.getElementById('su-local-accounts');
+  if (localAcctEl) {
+    const enabled = DB.settings.autoDownloadLocalAccounts || ['superuser','manager','admin'];
+    localAcctEl.innerHTML = ACCOUNT_OPTS.map(opt =>
+      `<label style="display:flex;align-items:center;gap:0.5rem;font-size:0.83rem;cursor:pointer;">
+        <input type="checkbox" value="${opt.value}" ${enabled.includes(opt.value) ? 'checked' : ''} style="cursor:pointer;">
+        ${opt.label}
+      </label>`
+    ).join('');
+  }
+}
+
+function saveAutoDownloadSettings() {
+  const inAppSel   = document.getElementById('su-inapp-interval');
+  const localSel   = document.getElementById('su-local-interval');
+  const inAppAccts = document.getElementById('su-inapp-accounts');
+  const localAccts = document.getElementById('su-local-accounts');
+
+  if (inAppSel) {
+    const h = parseInt(inAppSel.value) || 24;
+    DB.settings.inAppDownloadIntervalHours = Math.max(1, h);
+  }
+  if (localSel) {
+    const h = parseInt(localSel.value) || 24;
+    DB.settings.localDownloadIntervalHours = Math.max(1, h);
+  }
+  if (inAppAccts) {
+    DB.settings.autoDownloadAccounts = Array.from(inAppAccts.querySelectorAll('input[type=checkbox]:checked'))
+      .map(cb => cb.value);
+  }
+  if (localAccts) {
+    DB.settings.autoDownloadLocalAccounts = Array.from(localAccts.querySelectorAll('input[type=checkbox]:checked'))
+      .map(cb => cb.value);
+  }
+
+  saveData();
+  // Restart the daily email scheduler with the new interval
+  scheduleDailyEmail();
+  logActivity('Settings', `Updated auto-download controls: in-app every ${DB.settings.inAppDownloadIntervalHours}h (${(DB.settings.autoDownloadAccounts||[]).join(', ')}), local every ${DB.settings.localDownloadIntervalHours}h (${(DB.settings.autoDownloadLocalAccounts||[]).join(', ')})`);
+  const statusEl = document.getElementById('su-autodl-status');
+  if (statusEl) {
+    statusEl.textContent = '✓ Saved — In-App: every ' + DB.settings.inAppDownloadIntervalHours + 'h | Local: every ' + DB.settings.localDownloadIntervalHours + 'h';
+    statusEl.style.display = 'block';
+    setTimeout(() => { statusEl.style.display = 'none'; }, 3500);
+  }
+  showToast('Auto-download settings saved ✓');
 }
 
 function loadSuWelcomeMsg() {
@@ -6655,7 +6901,7 @@ function logAdminActivity(action, detail) {
 function saveAdminDataPackage() {
   const pkg = {
     _type: 'admin_data_package',
-    _appVersion: '9.0',
+    _appVersion: '12.0',
     _exportedAt: new Date().toISOString(),
     _adminUser: DB.adminCredentials.username,
     // All data arrays — complete snapshot
@@ -6851,7 +7097,7 @@ let _autoSaveTimer2 = null;
 function saveData(immediate) {
   // Always save to localStorage immediately to prevent data loss on refresh
   try {
-    const saveObjLocal = { ...DB, _appVersion: '9.0', _savedAt: new Date().toISOString() };
+    const saveObjLocal = { ...DB, _appVersion: '12.0', _savedAt: new Date().toISOString() };
     localStorage.setItem('washnfold_db', JSON.stringify(saveObjLocal));
   } catch(e) { /* silent */; }
 
@@ -6868,7 +7114,7 @@ function saveData(immediate) {
 
 async function _doCloudSave() {
   try {
-    const saveObj = { ...DB, _appVersion: '9.0', _savedAt: new Date().toISOString() };
+    const saveObj = { ...DB, _appVersion: '12.0', _savedAt: new Date().toISOString() };
     const jsonStr = JSON.stringify(saveObj);
     // localStorage is always written first (instant, never fails)
     localStorage.setItem('washnfold_db', jsonStr);
@@ -6892,7 +7138,7 @@ async function _doCloudSave() {
 }
 
 function exportDataBackup() {
-  const saveObj = { ...DB, _appVersion: '9.0', _savedAt: new Date().toISOString(),
+  const saveObj = { ...DB, _appVersion: '12.0', _savedAt: new Date().toISOString(),
     _schema: { invoiceFields: ['id','date','customerName','collectionDate','deliveryDate','items','total','paymentStatus','paidAmount','serviceTypes','invoiceText'],
                financeFields: ['id','customer','month','amount','paidAmount','status','paymentMethod','date','invoiceId'],
                deliveryFields: ['id','invoiceId','customer','serviceTypes','collectionDate','expectedDate','status','deliveredDate'] } };
@@ -8571,7 +8817,7 @@ document.addEventListener('DOMContentLoaded', () => {
       // Save data synchronously before the page closes/refreshes
       // This is the critical guard against data loss on refresh
       try {
-        const saveObj = Object.assign({}, window.DB || {}, { _appVersion: '9.0', _savedAt: new Date().toISOString() });
+        const saveObj = Object.assign({}, window.DB || {}, { _appVersion: '12.0', _savedAt: new Date().toISOString() });
         localStorage.setItem('washnfold_db', JSON.stringify(saveObj));
       } catch(_) {}
       _removeLocalPresence();
