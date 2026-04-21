@@ -164,10 +164,11 @@ window._initFirebase = function() {
     var _hb = null;
     window._fbStartPresenceHeartbeat = function(u, t) {
       if (_hb) clearInterval(_hb);
+      // Write presence immediately, then every 12 seconds (stale cutoff is 60s = 5× heartbeat)
       window._fbRegisterPresence(u, t);
-      _hb = setInterval(function() { window._fbRegisterPresence(u, t); }, 15000);
-      // Delay stale cleanup so we don't race against other devices just logging in
-      setTimeout(function() { window._fbCleanStaleSessions(); }, 60000);
+      _hb = setInterval(function() { window._fbRegisterPresence(u, t); }, 12000);
+      // Stale cleanup after 90s — gives other devices time to register
+      setTimeout(function() { window._fbCleanStaleSessions(); }, 90000);
     };
 
     window._fbStopPresenceHeartbeat = async function() {
@@ -189,8 +190,8 @@ window._initFirebase = function() {
 
     window._fbListenPresence = function(cb) {
       try {
-        return db.collection('washnfold_presence').onSnapshot(function(snap) {
-          var cutoff = new Date(Date.now() - 180000).toISOString();
+        var unsubscribe = db.collection('washnfold_presence').onSnapshot(function(snap) {
+          var cutoff = new Date(Date.now() - 60000).toISOString(); // 60s stale window (4× heartbeat)
           var sessions = [];
           snap.forEach(function(d) {
             var data = d.data();
@@ -199,8 +200,48 @@ window._initFirebase = function() {
             }
           });
           if (cb) cb(sessions);
+        }, function(err) {
+          // onSnapshot failed (permission/network error) — fall back to polling
+          window._fbPresencePoll(cb);
         });
+        return unsubscribe;
       } catch(e) { return null; }
+    };
+
+    // Polling fallback: used when onSnapshot is unavailable
+    var _pollTimer = null;
+    window._fbPresencePoll = function(cb) {
+      if (_pollTimer) return; // already polling
+      _pollTimer = setInterval(async function() {
+        try {
+          var snap = await db.collection('washnfold_presence').get();
+          var cutoff = new Date(Date.now() - 60000).toISOString();
+          var sessions = [];
+          snap.forEach(function(d) {
+            var data = d.data();
+            if ((data.lastSeen || '') > cutoff && data.sessionId !== SID) {
+              sessions.push(data);
+            }
+          });
+          if (cb) cb(sessions);
+        } catch(e) {}
+      }, 20000); // poll every 20 seconds
+    };
+
+    // One-shot presence read (used by the periodic refresh in initApp)
+    window._fbGetPresenceOnce = async function() {
+      try {
+        var snap = await db.collection('washnfold_presence').get();
+        var cutoff = new Date(Date.now() - 60000).toISOString();
+        var sessions = [];
+        snap.forEach(function(d) {
+          var data = d.data();
+          if ((data.lastSeen || '') > cutoff && data.sessionId !== SID) {
+            sessions.push(data);
+          }
+        });
+        return sessions;
+      } catch(e) { return []; }
     };
 
     window._fbListenData = function(cb) {
@@ -1774,6 +1815,23 @@ body.mobile-view .card-title-row { flex-direction: column; align-items: flex-sta
     <div id="su-audit-log-list" style="max-height:500px;overflow-y:auto;"></div>
   </div>
 
+
+  <!-- Bin Access Delegation -->
+  <div class="card" style="border-color:rgba(255,107,107,0.35);background:rgba(255,107,107,0.04);" id="su-bin-access-card">
+    <div class="card-title" style="color:var(--danger);">▸ 🗑️ Recycle Bin — Access Control</div>
+    <p style="font-size:0.82rem;color:var(--muted);margin-bottom:0.8rem;">
+      Super User always has Bin access. Control Manager and Admin/Staff access below.
+    </p>
+    <div style="padding:0.6rem 0;border-bottom:1px solid var(--border);margin-bottom:0.6rem;">
+      <label style="display:flex;align-items:center;gap:0.6rem;font-size:0.85rem;cursor:pointer;">
+        <input type="checkbox" id="su-bin-manager-access" onchange="toggleBinManagerAccess(this.checked)" style="cursor:pointer;">
+        ✅ <b>Manager Account</b> <span style="color:var(--muted);font-size:0.75rem;">(check = has access)</span>
+      </label>
+    </div>
+    <div id="su-bin-delegate-list"></div>
+    <button class="btn btn-secondary btn-sm" style="margin-top:0.8rem;" onclick="saveData();showToast('Bin access settings saved ✓');">💾 Save Bin Access</button>
+  </div>
+
   <!-- ══ AUTO-DOWNLOAD CONTROLS ══ -->
   <div class="card" style="border-color:rgba(162,155,254,0.4);background:rgba(162,155,254,0.04);">
     <div class="card-title" style="color:var(--purple);">▸ ⏱ Auto-Download Controls</div>
@@ -2440,6 +2498,12 @@ function mergeLoadedData(loaded) {
       DB.settings.autoDownloadAccounts = ['superuser','manager','admin'];
     if (!Array.isArray(DB.settings.autoDownloadLocalAccounts))
       DB.settings.autoDownloadLocalAccounts = ['superuser','manager','admin'];
+    // binManagerBlocked: defaults to false (manager has access by default)
+    if (DB.settings.binManagerBlocked === undefined) DB.settings.binManagerBlocked = false;
+    // binAccessList: ensure array
+    if (!Array.isArray(DB.settings.binAccessList)) DB.settings.binAccessList = [];
+    if (!Array.isArray(DB.settings.binAccessList))
+      DB.settings.binAccessList = [];
   }
 
   if (loaded.adminPermissions && typeof loaded.adminPermissions === 'object') {
@@ -2492,7 +2556,13 @@ function confirmLogout(isAuto) {
   if (btn) { btn.textContent = '⏳ Saving...'; btn.disabled = true; }
 
   // ── Step 1: Synchronous localStorage save (instant, never fails) ──
-  const saveObj = { ...DB, _appVersion: '12.0', _savedAt: new Date().toISOString() };
+  const saveObj = {
+    ...DB,
+    _appVersion: '12.0',
+    _savedAt: new Date().toISOString(),
+    deletedSeedIds: DB.deletedSeedIds || [],
+    settings: { ...DB.settings }
+  };
   const jsonStr = JSON.stringify(saveObj);
   try { localStorage.setItem('washnfold_db', jsonStr); } catch(e) {}
 
@@ -2524,7 +2594,12 @@ function confirmLogout(isAuto) {
       DB.settings.lastDailyLogDate = new Date().toISOString();
       _saveLogToDownloadsFolder();
       // Re-save with updated lastDailyLogDate
-      try { localStorage.setItem('washnfold_db', JSON.stringify({ ...DB, _appVersion: '12.0', _savedAt: new Date().toISOString() })); } catch(e) {}
+      try {
+        localStorage.setItem('washnfold_db', JSON.stringify({
+          ...DB, _appVersion: '12.0', _savedAt: new Date().toISOString(),
+          deletedSeedIds: DB.deletedSeedIds || [], settings: { ...DB.settings }
+        }));
+      } catch(e) {}
     }
   }
 
@@ -2828,9 +2903,11 @@ function doLogout() {
     window._stopLocalPresence();
   }
 
-  // Unsubscribe from realtime listeners
+  // Unsubscribe from realtime listeners and clear timers
   if (_presenceUnsubscribe) { try { _presenceUnsubscribe(); } catch(e){} _presenceUnsubscribe = null; }
   if (_dataUnsubscribe) { try { _dataUnsubscribe(); } catch(e){} _dataUnsubscribe = null; }
+  if (_presenceRefreshTimer) { clearInterval(_presenceRefreshTimer); _presenceRefreshTimer = null; }
+  if (_reminderIntervalId) { clearInterval(_reminderIntervalId); _reminderIntervalId = null; }
 
   // Clear persisted session on logout
   try { sessionStorage.removeItem('washnfold_session'); } catch(e) {}
@@ -2861,10 +2938,42 @@ function doLogout() {
   location.reload();
 }
 
-let _reminderIntervalId = null;
-let _presenceUnsubscribe = null;
-let _dataUnsubscribe = null;
-let _lastRemoteUpdate = null;
+let _reminderIntervalId   = null;
+let _presenceUnsubscribe  = null;
+let _dataUnsubscribe      = null;
+let _lastRemoteUpdate     = null;
+let _presenceRefreshTimer = null;
+
+// ── Merge Firebase + local presence and update badge ─────────────────────────
+// Firebase = cross-device; localStorage = same-device multi-tab.
+// De-duplicates by sessionId so the same session is never counted twice.
+function _mergeAndUpdatePresence(firebaseSessions) {
+  const seen = new Set();
+  const merged = [];
+  // Firebase sessions first (most authoritative for cross-device)
+  (firebaseSessions || []).forEach(function(s) {
+    if (s.sessionId && !seen.has(s.sessionId)) {
+      seen.add(s.sessionId);
+      merged.push(s);
+    } else if (!s.sessionId) {
+      merged.push(s); // legacy entries without sessionId
+    }
+  });
+  // Add local same-device sessions not already covered by Firebase
+  // (This handles the case where Firebase is blocked on some devices)
+  try {
+    const STALE = 70000;
+    const now   = Date.now();
+    const all   = JSON.parse(localStorage.getItem('washnfold_presence_local') || '{}');
+    Object.entries(all).forEach(function([tabId, s]) {
+      if (now - s.lastSeen < STALE && !seen.has(tabId)) {
+        seen.add(tabId);
+        merged.push({ sessionId: tabId, username: s.username, accountType: s.accountType });
+      }
+    });
+  } catch(e) {}
+  _updatePresenceBadge(merged);
+}
 
 // ── Presence badge updater — always shows, even with 0 other users ───────────
 function _updatePresenceBadge(otherSessions) {
@@ -2924,43 +3033,57 @@ function initApp() {
     setTimeout(showOfflineBanner, 1500);
   }
 
-  // ── Multi-user presence: register this session online ──
-  _updatePresenceBadge([]); // show "1 online" (yourself) immediately on login
+  // ══ MULTI-DEVICE PRESENCE ════════════════════════════════════════
+  // Strategy: Firebase is the source of truth for cross-device presence.
+  // localStorage is used ONLY for same-device/same-browser tab counting.
+  // The badge always shows the union of both sources, de-duplicated by username+sessionId.
+
+  _updatePresenceBadge([]); // show "1 online (you)" immediately
+
+  // Step 1: Start Firebase heartbeat (writes presence to Firestore every 12s)
   if (window._fbStartPresenceHeartbeat) {
     window._fbStartPresenceHeartbeat(currentAccountUsername, currentAccountType);
   }
-  // Also always run local presence tracking (works even when Firebase is blocked)
+
+  // Step 2: Always run local presence (same-device multi-tab support)
   if (window._startLocalPresence) {
     window._startLocalPresence();
   }
 
-  // ── Listen for other users coming online/going offline ──
+  // Step 3: Listen for Firebase presence changes (cross-device realtime)
   if (window._fbListenPresence) {
-    if (_presenceUnsubscribe) _presenceUnsubscribe();
-    _presenceUnsubscribe = window._fbListenPresence(function(otherSessions) {
-      _updatePresenceBadge(otherSessions);
+    if (_presenceUnsubscribe) { try { _presenceUnsubscribe(); } catch(e) {} }
+    _presenceUnsubscribe = window._fbListenPresence(function(firebaseSessions) {
+      // Merge Firebase sessions with local sessions, de-duplicate by sessionId
+      _mergeAndUpdatePresence(firebaseSessions);
     });
   }
 
-  // ── Re-register presence when tab regains focus (handles network interruptions) ──
+  // Step 4: Periodic Firebase presence refresh (catches missed snapshots)
+  // Runs every 25 seconds — supplements onSnapshot for reliability
+  if (_presenceRefreshTimer) clearInterval(_presenceRefreshTimer);
+  _presenceRefreshTimer = setInterval(async function() {
+    if (!currentAccountUsername || window._firebaseBlocked) return;
+    // Re-write own presence (keep it fresh)
+    if (window._fbRegisterPresence) {
+      window._fbRegisterPresence(currentAccountUsername, currentAccountType);
+    }
+    // Also manually read presence (in case onSnapshot missed updates)
+    if (window._fbGetPresenceOnce) {
+      const sessions = await window._fbGetPresenceOnce();
+      _mergeAndUpdatePresence(sessions);
+    }
+  }, 25000);
+
+  // Step 5: Re-register when tab becomes visible again (handles sleep/background)
   document.addEventListener('visibilitychange', function() {
     if (document.visibilityState === 'visible' && currentAccountUsername) {
       if (window._fbRegisterPresence) {
         window._fbRegisterPresence(currentAccountUsername, currentAccountType);
       }
-      if (window._startLocalPresence) {
-        window._startLocalPresence();
-      }
+      if (window._startLocalPresence) window._startLocalPresence();
     }
-  }, { once: false });
-
-  // ── Poll for local presence changes every 10s (catches cross-tab updates) ──
-  setInterval(function() {
-    if (currentAccountUsername && window._startLocalPresence) {
-      // Re-write own entry and refresh badge
-      window._startLocalPresence();
-    }
-  }, 10000);
+  });
 
   // ── Listen for remote data changes (another user saved something) ──
   if (window._fbListenData) {
@@ -2975,16 +3098,45 @@ function initApp() {
       if (updateAge < 4000) return; // too fresh — probably our own write
       try {
         const loaded = JSON.parse(payload);
-        // Merge without overwriting credentials (those stay local per session)
+        // Preserve everything that must NOT be overwritten by a remote sync:
+        // 1. Credentials (session-local, already authenticated)
+        // 2. deletedSeedIds (local deletions must survive remote syncs)
+        // 3. settings that are device-specific (lastDailyLogDate etc.)
+        // 4. appDownloads (in-app folder is device-local)
         const savedCreds = {
-          credentials: DB.credentials,
+          credentials:          DB.credentials,
           superUserCredentials: DB.superUserCredentials,
-          adminCredentials: DB.adminCredentials,
-          adminAccounts: DB.adminAccounts
+          adminCredentials:     DB.adminCredentials,
+          adminAccounts:        DB.adminAccounts
         };
+        const savedDeletedSeeds = [...(DB.deletedSeedIds || [])];
+        const savedAppDownloads = DB.appDownloads ? [...DB.appDownloads] : [];
+        const savedSettings_local = {
+          lastDailyLogDate:          DB.settings.lastDailyLogDate,
+          lastLogSentAt:             DB.settings.lastLogSentAt,
+          localDownloadIntervalHours: DB.settings.localDownloadIntervalHours,
+          inAppDownloadIntervalHours: DB.settings.inAppDownloadIntervalHours,
+          autoDownloadAccounts:       DB.settings.autoDownloadAccounts,
+          autoDownloadLocalAccounts:  DB.settings.autoDownloadLocalAccounts,
+          binAccessList:              DB.settings.binAccessList,
+          binManagerBlocked:          DB.settings.binManagerBlocked,
+          downloadsAccessList:        DB.settings.downloadsAccessList,
+        };
+
         mergeLoadedData(loaded);
-        // Restore credentials (don't let remote overwrite session creds)
+
+        // Restore session-critical data
         Object.assign(DB, savedCreds);
+        // Union deletedSeedIds: keep all local + incoming deletions
+        if (!DB.deletedSeedIds) DB.deletedSeedIds = [];
+        savedDeletedSeeds.forEach(id => { if (!DB.deletedSeedIds.includes(id)) DB.deletedSeedIds.push(id); });
+        // Re-apply finance filter against the merged deletedSeedIds
+        DB.finance = DB.finance.filter(r => !DB.deletedSeedIds.includes(r.id));
+        // Restore device-local settings (don't let remote reset them)
+        Object.assign(DB.settings, savedSettings_local);
+        // Restore in-app downloads (device-local)
+        if (savedAppDownloads.length > 0) DB.appDownloads = savedAppDownloads;
+
         renderAll();
         const ind = document.getElementById('autosave-indicator');
         if (ind) {
@@ -3025,9 +3177,9 @@ function applyAccountRestrictions() {
   const dlNav = document.getElementById('nav-downloads');
   if (dlNav) dlNav.style.display = _canAccessDownloads() ? '' : 'none';
 
-  // Recycle bin nav: always visible to all logged-in users
+  // Recycle bin nav: Super User + Manager always see it; Admin/staff only if delegated
   const binNav = document.getElementById('nav-recycle');
-  if (binNav) binNav.style.display = '';
+  if (binNav) binNav.style.display = _canAccessBin() ? '' : 'none';
 
   // Show/hide nav items based on perm
   document.querySelectorAll('#main-nav .nav-btn').forEach(btn => {
@@ -3047,6 +3199,7 @@ function applyAccountRestrictions() {
     renderSuAccountsList();
     renderSuAuditLog();
     loadSuEmailSettings();
+    renderBinDelegateList();
   } else if (isAdmin) {
     const firstAllowed = Object.keys(adminPerms).find(k => adminPerms[k]);
     showPage(firstAllowed || 'invoice');
@@ -4546,6 +4699,7 @@ function emptyRecycleBin() {
 }
 
 function renderRecycleBin() {
+  if (!_canAccessBin()) { showToast('Access restricted. Ask the Super User to grant Recycle Bin access.', true); showPage('overview'); return; }
   const el = document.getElementById('recycle-bin-list');
   if (!el) return;
 
@@ -4646,6 +4800,19 @@ function deleteFinRecord(recId) {
 // ══════════════════════════════════════════════════════════════════
 // IN-APP DOWNLOADS FOLDER — permanent log archive (super user only)
 // ══════════════════════════════════════════════════════════════════
+function _canAccessBin() {
+  if (currentAccountType === 'superuser') return true;
+  const list = DB.settings.binAccessList || [];
+  // Manager always has access UNLESS explicitly restricted by super user
+  if (currentAccountType === 'manager') {
+    // If 'manager' is explicitly in a deny list, block; otherwise allow by default
+    // We use 'binManagerBlocked' flag to optionally restrict manager
+    return !DB.settings.binManagerBlocked;
+  }
+  if (currentAccountType !== 'admin') return false;
+  return list.includes(currentAdminAccountId) || list.includes(currentAccountUsername);
+}
+
 function _canAccessDownloads() {
   if (currentAccountType === 'superuser') return true;
   const delegated = DB.settings.downloadsAccessList || [];
@@ -6323,6 +6490,8 @@ function renderSuAccountsList() {
     }).join('');
   }
   el.innerHTML = html;
+  // Keep bin delegate list in sync
+  renderBinDelegateList();
 }
 
 function suResetPassword(id) {
@@ -6363,9 +6532,12 @@ function suDeleteAccount(id) {
   if (!acct) return;
   if (!confirm(`Delete account "${acct.label}" (@${acct.username})?\n\nThis will permanently remove this account. They will no longer be able to log in.`)) return;
   DB.adminAccounts = DB.adminAccounts.filter(a=>a.id!==id);
-  // Also remove from downloads access list if present
+  // Also remove from downloads + bin access lists if present
   if (DB.settings.downloadsAccessList) {
     DB.settings.downloadsAccessList = DB.settings.downloadsAccessList.filter(i => i !== id);
+  }
+  if (DB.settings.binAccessList) {
+    DB.settings.binAccessList = DB.settings.binAccessList.filter(i => i !== id);
   }
   logActivity('Delete Account', `${currentAccountUsername} deleted admin account: ${acct.label} (@${acct.username})`);
   saveData(true);
@@ -6409,6 +6581,62 @@ function loadSuEmailSettings() {
   if (templateEl) templateEl.value = DB.settings.emailjsTemplateId || '';
   updateEmailStatusUI();
   loadAutoDownloadSettingsUI();
+}
+
+
+// ══════════════════════════════════════════════════════════════════
+// RECYCLE BIN ACCESS DELEGATION
+// ══════════════════════════════════════════════════════════════════
+function renderBinDelegateList() {
+  // Sync manager checkbox state
+  const manCb = document.getElementById('su-bin-manager-access');
+  if (manCb) manCb.checked = !DB.settings.binManagerBlocked;
+
+  const el = document.getElementById('su-bin-delegate-list');
+  if (!el) return;
+  const list = DB.settings.binAccessList || [];
+  if (!DB.adminAccounts || DB.adminAccounts.length === 0) {
+    el.innerHTML = '<p style="color:var(--muted);font-size:0.82rem;">No admin/staff accounts exist yet. Create accounts from Account Management above.</p>';
+    return;
+  }
+  el.innerHTML = DB.adminAccounts.map(acct => {
+    const hasAccess = list.includes(acct.id) || list.includes(acct.username);
+    const suspendedTag = acct.suspended ? ' <span style="color:var(--danger);font-size:0.7rem;">[SUSPENDED]</span>' : '';
+    return `<label style="display:flex;align-items:center;gap:0.6rem;font-size:0.85rem;cursor:pointer;padding:0.4rem 0;border-bottom:1px solid var(--border);">
+      <input type="checkbox" ${hasAccess ? 'checked' : ''} onchange="toggleBinDelegate('${acct.id}', this.checked)" style="cursor:pointer;">
+      ${hasAccess ? '✅' : '⬜'} <b>${escHtml(acct.label)}</b>${suspendedTag} <span style="color:var(--muted);font-size:0.75rem;">(${escHtml(acct.username)})</span>
+    </label>`;
+  }).join('');
+}
+
+function toggleBinManagerAccess(hasAccess) {
+  DB.settings.binManagerBlocked = !hasAccess;
+  // If current account is manager, update nav immediately
+  if (currentAccountType === 'manager') {
+    const binNav = document.getElementById('nav-recycle');
+    if (binNav) binNav.style.display = _canAccessBin() ? '' : 'none';
+  }
+  saveData();
+  logActivity('Bin Access', `Super User ${hasAccess ? 'granted' : 'revoked'} Recycle Bin access for Manager`);
+  showToast(`Manager bin access ${hasAccess ? 'granted' : 'revoked'} ✓`);
+}
+
+function toggleBinDelegate(acctId, grant) {
+  if (!DB.settings.binAccessList) DB.settings.binAccessList = [];
+  if (grant) {
+    if (!DB.settings.binAccessList.includes(acctId)) DB.settings.binAccessList.push(acctId);
+  } else {
+    DB.settings.binAccessList = DB.settings.binAccessList.filter(id => id !== acctId);
+  }
+  // Immediately update nav visibility if this is the current account
+  if (currentAdminAccountId === acctId || currentAccountUsername === acctId) {
+    const binNav = document.getElementById('nav-recycle');
+    if (binNav) binNav.style.display = _canAccessBin() ? '' : 'none';
+  }
+  saveData();
+  logActivity('Delegate Bin', `${grant ? 'Granted' : 'Revoked'} Recycle Bin access for account ${acctId}`);
+  renderBinDelegateList();
+  showToast(`Bin access ${grant ? 'granted' : 'revoked'} ✓`);
 }
 
 // ══════════════════════════════════════════════════════════════════
@@ -7114,7 +7342,15 @@ function saveData(immediate) {
 
 async function _doCloudSave() {
   try {
-    const saveObj = { ...DB, _appVersion: '12.0', _savedAt: new Date().toISOString() };
+    const saveObj = {
+      ...DB,
+      _appVersion: '12.0',
+      _savedAt: new Date().toISOString(),
+      // Always include deletedSeedIds explicitly — prevents accidental omission
+      deletedSeedIds: DB.deletedSeedIds || [],
+      // Always include full settings object
+      settings: { ...DB.settings }
+    };
     const jsonStr = JSON.stringify(saveObj);
     // localStorage is always written first (instant, never fails)
     localStorage.setItem('washnfold_db', jsonStr);
@@ -8796,8 +9032,19 @@ document.addEventListener('DOMContentLoaded', () => {
       active.forEach(([id, s]) => { pruned[id] = s; });
       localStorage.setItem(PRESENCE_KEY, JSON.stringify(pruned));
 
-      const others = active.filter(([id]) => id !== MY_TAB_ID).map(([,s]) => s);
-      _updatePresenceBadge(others);
+      // Pass local-only sessions to the merge function
+      // (Firebase sessions will be added by the Firebase listener separately)
+      const others = active.filter(([id]) => id !== MY_TAB_ID).map(([,s]) => ({
+        sessionId: id, username: s.username, accountType: s.accountType
+      }));
+      // Only use local badge update if Firebase is blocked (avoid overwriting Firebase data)
+      if (window._firebaseBlocked) {
+        _updatePresenceBadge(others);
+      }
+      // Always trigger a merge if we have the merge function
+      if (typeof _mergeAndUpdatePresence === 'function' && !window._firebaseBlocked) {
+        // Don't call here — Firebase listener handles the badge. Local just keeps data fresh.
+      }
     } catch(e) {}
   }
 
@@ -8817,7 +9064,12 @@ document.addEventListener('DOMContentLoaded', () => {
       // Save data synchronously before the page closes/refreshes
       // This is the critical guard against data loss on refresh
       try {
-        const saveObj = Object.assign({}, window.DB || {}, { _appVersion: '12.0', _savedAt: new Date().toISOString() });
+        const saveObj = Object.assign({}, window.DB || {}, {
+          _appVersion: '12.0',
+          _savedAt: new Date().toISOString(),
+          deletedSeedIds: (window.DB && window.DB.deletedSeedIds) ? window.DB.deletedSeedIds : [],
+          settings: window.DB ? { ...window.DB.settings } : {}
+        });
         localStorage.setItem('washnfold_db', JSON.stringify(saveObj));
       } catch(_) {}
       _removeLocalPresence();
