@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Washn' Fold — Management System V9</title>
+<title>Washn' Fold — Management System V11</title>
 
 <!-- Fonts: try Google Fonts first, fall back to system fonts gracefully on blocked networks -->
 <!-- Fonts loaded non-blocking — page renders instantly even if fonts.googleapis.com
@@ -563,7 +563,7 @@ body.mobile-view .card-title-row { flex-direction: column; align-items: flex-sta
   <div class="login-box">
     <div style="font-family:'DM Mono',monospace;font-size:0.7rem;letter-spacing:0.3em;color:var(--accent);margin-bottom:0.5rem;">✦ WASHN' FOLD</div>
     <h1>Management</h1>
-    <p class="sub">Laundry Service Software v9.0</p>
+    <p class="sub">Laundry Service Software v11.0</p>
     <div id="login-form">
       <div class="form-group" style="margin-bottom:1rem;text-align:left;">
         <label>Username</label>
@@ -1957,7 +1957,10 @@ body.mobile-view .card-title-row { flex-direction: column; align-items: flex-sta
 ════════════════════════════════════════════════════ -->
 <div class="page" id="page-downloads">
   <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:0.8rem;margin-bottom:1.2rem;">
-    <h2 class="section-title" style="margin-bottom:0;">📂 In-App Downloads Folder</h2>
+    <div>
+      <h2 class="section-title" style="margin-bottom:0.2rem;">📂 In-App Downloads Folder</h2>
+      <span id="downloads-header-count" style="font-size:0.75rem;color:var(--accent2);font-family:'DM Mono',monospace;"></span>
+    </div>
     <button class="btn btn-primary btn-sm" onclick="manualSaveToDownloads()">💾 Save Log Now</button>
   </div>
   <div class="card" style="margin-bottom:1rem;background:rgba(78,205,196,0.05);border-color:rgba(78,205,196,0.25);">
@@ -2277,47 +2280,75 @@ async function loadCloudDataAndProceed() {
 
 function mergeLoadedData(loaded) {
   if (!loaded || typeof loaded !== 'object') return;
-  const ARRAY_KEYS = ['invoices','finance','deliveries','materials','reminders','expenses','notifications','deptHistory','adminActivityLog','activityLog','recycleBin','appDownloads'];
+
+  // ── Array data — run migration on each record ─────────────────────
+  const ARRAY_KEYS = ['invoices','finance','deliveries','materials','reminders','expenses',
+                      'notifications','deptHistory','adminActivityLog','activityLog'];
   ARRAY_KEYS.forEach(key => {
-    if (Array.isArray(loaded[key])) DB[key] = loaded[key].map(migrateRecord);
+    if (Array.isArray(loaded[key])) DB[key] = loaded[key].map(migrateRecord).filter(Boolean);
   });
 
-  // CRITICAL: Fully replace credential objects — never merge with in-code defaults.
-  // This was the cause of the password reset bug (Object.assign would overwrite saved
-  // passwords with defaults if keys overlapped on fresh page load).
-  if (loaded.credentials && typeof loaded.credentials === 'object') {
-    DB.credentials = Object.assign({}, DB.credentials, loaded.credentials);
+  // ── recycleBin & appDownloads: never run through migrateRecord ─────
+  if (Array.isArray(loaded.recycleBin)) {
+    // Validate each bin item has required fields; drop corrupt entries
+    DB.recycleBin = loaded.recycleBin.filter(b =>
+      b && typeof b === 'object' && b.id && b.type && b.data && b.expiresAt
+    );
   }
-  if (loaded.superUserCredentials && typeof loaded.superUserCredentials === 'object') {
-    DB.superUserCredentials = Object.assign({}, DB.superUserCredentials, loaded.superUserCredentials);
-  }
-  if (loaded.adminCredentials && typeof loaded.adminCredentials === 'object') {
-    DB.adminCredentials = Object.assign({}, DB.adminCredentials, loaded.adminCredentials);
-  }
-  if (Array.isArray(loaded.adminAccounts)) {
-    DB.adminAccounts = loaded.adminAccounts;
+  if (Array.isArray(loaded.appDownloads)) {
+    DB.appDownloads = loaded.appDownloads.filter(d =>
+      d && typeof d === 'object' && d.id && d.filename
+    );
   }
 
-  // Merge settings carefully — preserve existing defaults for new keys
-  if (loaded.settings && typeof loaded.settings === 'object') {
-    Object.assign(DB.settings, loaded.settings);
+  // ── Credentials: loaded file always wins over in-code defaults ─────
+  if (loaded.credentials && typeof loaded.credentials === 'object') {
+    DB.credentials = { ...DB.credentials, ...loaded.credentials };
   }
+  if (loaded.superUserCredentials && typeof loaded.superUserCredentials === 'object') {
+    DB.superUserCredentials = { ...DB.superUserCredentials, ...loaded.superUserCredentials };
+  }
+  if (loaded.adminCredentials && typeof loaded.adminCredentials === 'object') {
+    DB.adminCredentials = { ...DB.adminCredentials, ...loaded.adminCredentials };
+  }
+  if (Array.isArray(loaded.adminAccounts)) {
+    DB.adminAccounts = loaded.adminAccounts.map(a => ({
+      id: a.id || 'acct_' + Date.now(),
+      label: a.label || '',
+      username: a.username || '',
+      password: a.password || '',
+      permissions: a.permissions || {},
+      welcomeMessage: a.welcomeMessage || '',
+      suspended: !!a.suspended,
+      createdAt: a.createdAt || ''
+    }));
+  }
+
+  // ── Settings: merge — new default keys survive if file is older ────
+  if (loaded.settings && typeof loaded.settings === 'object') {
+    // Spread loaded settings OVER defaults — keys not in loaded file keep default values
+    DB.settings = { ...DB.settings, ...loaded.settings };
+    // Ensure new v9 keys always have valid defaults even in old files
+    if (!Array.isArray(DB.settings.downloadsAccessList)) DB.settings.downloadsAccessList = [];
+    if (DB.settings.lastDailyLogDate === undefined) DB.settings.lastDailyLogDate = null;
+    if (DB.settings.inactivityMins === undefined) DB.settings.inactivityMins = 5;
+  }
+
   if (loaded.adminPermissions && typeof loaded.adminPermissions === 'object') {
     Object.assign(DB.adminPermissions, loaded.adminPermissions);
   }
   if (loaded.prices && typeof loaded.prices === 'object') {
     Object.assign(DB.prices, loaded.prices);
   }
-  if (loaded.customerHistory) DB.customerHistory = loaded.customerHistory;
+  if (loaded.customerHistory && typeof loaded.customerHistory === 'object') {
+    DB.customerHistory = loaded.customerHistory;
+  }
   if (Array.isArray(loaded.deletedSeedIds)) DB.deletedSeedIds = loaded.deletedSeedIds;
 
-  // Re-run seed (only adds missing seed records, never overwrites, respects user deletions)
-  const _deletedSet = new Set(DB.deletedSeedIds || []);
-  seedFinance.forEach(r => {
-    if (_deletedSet.has(r.id)) return; // user deliberately deleted this — never re-add
-    if (!DB.finance.find(f => f.id === r.id)) DB.finance.push(r);
-    if (!DB.customerHistory[r.customer]) DB.customerHistory[r.customer] = { lastService:'wash_only', lastDate: r.date };
-  });
+  // ── Re-seed: reset guard so _loadSeedData re-runs with fresh DB ────
+  window._seedLoaded = false;
+  _loadSeedData();
+
   _finSelectedIds && _finSelectedIds.clear();
   _finCurrentPage = 1;
   window._filteredFinance = [];
@@ -2407,7 +2438,7 @@ function initEmailJS() {
 function buildFullBackupBlob() {
   const saveObj = {
     ...DB,
-    _appVersion: '7.0',
+    _appVersion: '9.0',
     _savedAt: new Date().toISOString(),
     _type: 'full_backup'
   };
@@ -2730,6 +2761,8 @@ function initApp() {
   renderDeptHistory();
   _purgeExpiredBinItems(); // clean up expired bin items on every login
   _updateBinNavCount();
+  // Refresh downloads badge immediately so counter shows on login
+  setTimeout(() => { renderDownloadsFolder(); }, 200);
   checkRemindersAndAlerts();
   if (_reminderIntervalId) clearInterval(_reminderIntervalId);
   _reminderIntervalId = setInterval(checkRemindersAndAlerts, 60000);
@@ -2883,7 +2916,7 @@ function renderAll() {
   renderReminders();
   renderExpenses();
   renderDeptHistory();
-  _updateBinNavCount();
+  _updateBinNavCount();  // keeps bin + downloads badges live
   // Defer the heavy table renders to prevent UI freeze on large datasets
   requestAnimationFrame(() => {
     renderInvoicesList();
@@ -2896,10 +2929,28 @@ function renderAll() {
 }
 
 function _updateBinNavCount() {
-  _purgeExpiredBinItems && _purgeExpiredBinItems();
-  const count = (DB.recycleBin || []).length;
+  // Purge expired bin items inline
+  if (Array.isArray(DB.recycleBin)) {
+    const cutoff = new Date(Date.now() - 30 * 86400000).toISOString();
+    DB.recycleBin = DB.recycleBin.filter(b => b && b.expiresAt && b.expiresAt > cutoff);
+  }
+  const binCount = (DB.recycleBin || []).length;
   const el = document.getElementById('bin-nav-count');
-  if (el) el.textContent = count > 0 ? count : '';
+  if (el) el.textContent = binCount > 0 ? binCount : '';
+
+  // Also update downloads badge count
+  const dlCount = (DB.appDownloads || []).length;
+  const dlBtn = document.getElementById('nav-downloads');
+  if (dlBtn) {
+    let badge = dlBtn.querySelector('.dl-count');
+    if (!badge) {
+      badge = document.createElement('span');
+      badge.className = 'dl-count';
+      badge.style.cssText = 'background:rgba(78,205,196,0.25);color:var(--accent2);border-radius:10px;padding:0.05rem 0.35rem;font-size:0.65rem;font-family:\'DM Mono\',monospace;margin-left:0.25rem;';
+      dlBtn.appendChild(badge);
+    }
+    badge.textContent = dlCount > 0 ? dlCount : '';
+  }
 }
 
 // ══════════════════════════════════════════════════════════════════
@@ -4348,36 +4399,81 @@ function emptyRecycleBin() {
 function renderRecycleBin() {
   const el = document.getElementById('recycle-bin-list');
   if (!el) return;
-  _purgeExpiredBinItems();
+
+  // Ensure array exists
+  if (!Array.isArray(DB.recycleBin)) DB.recycleBin = [];
+
+  // Purge expired items
+  const cutoff = new Date(Date.now() - 30 * 86400000).toISOString();
+  DB.recycleBin = DB.recycleBin.filter(b => b && b.expiresAt && b.expiresAt > cutoff);
+
+  const count = DB.recycleBin.length;
+
+  // Update count displays
   const countEl = document.getElementById('recycle-bin-count');
-  if (countEl) countEl.textContent = DB.recycleBin.length ? `(${DB.recycleBin.length} item${DB.recycleBin.length!==1?'s':''})` : '(empty)';
-  if (!DB.recycleBin || DB.recycleBin.length === 0) {
-    el.innerHTML = '<div class="empty-state"><div class="icon">🗑️</div><div>Recycle bin is empty.</div></div>';
+  if (countEl) countEl.textContent = count ? `(${count} item${count !== 1 ? 's' : ''})` : '(empty)';
+  const navCount = document.getElementById('bin-nav-count');
+  if (navCount) navCount.textContent = count > 0 ? count : '';
+
+  if (count === 0) {
+    el.innerHTML = `<div class="empty-state" style="padding:3rem;">
+      <div class="icon" style="font-size:3rem;">🗑️</div>
+      <div style="margin-top:0.5rem;font-size:0.9rem;color:var(--muted);">Recycle bin is empty.</div>
+      <div style="font-size:0.78rem;color:var(--muted);margin-top:0.4rem;">Deleted items will appear here for 30 days before permanent removal.</div>
+    </div>`;
     return;
   }
-  el.innerHTML = DB.recycleBin.map(item => {
-    const deletedAt = new Date(item.deletedAt).toLocaleString('en-GB',{day:'2-digit',month:'short',hour:'2-digit',minute:'2-digit'});
-    const expiresAt = new Date(item.expiresAt).toLocaleDateString('en-GB',{day:'2-digit',month:'short',year:'numeric'});
-    const daysLeft = Math.max(0, Math.ceil((new Date(item.expiresAt) - Date.now()) / 86400000));
-    const name = item.data.customer || item.data.customerName || item.data.item || item.data.name || item.data.title || item.data.id || '—';
-    const typeIcon = {finance:'💰',invoice:'🧾',delivery:'📦',expense:'💸',material:'🧴',reminder:'🔔'}[item.type] || '📄';
-    const urgency = daysLeft <= 3 ? 'var(--danger)' : daysLeft <= 7 ? 'var(--accent)' : 'var(--muted)';
-    return `<div style="background:var(--surface2);border:1px solid var(--border);border-radius:10px;padding:1rem;margin-bottom:0.7rem;display:flex;align-items:flex-start;gap:0.8rem;flex-wrap:wrap;">
-      <div style="font-size:1.5rem;flex-shrink:0;">${typeIcon}</div>
-      <div style="flex:1;min-width:0;">
-        <div style="font-weight:600;font-size:0.9rem;">${escHtml(name)}</div>
-        <div style="font-size:0.72rem;color:var(--muted);font-family:'DM Mono',monospace;margin-top:0.2rem;">
-          ${item.type.toUpperCase()} · Deleted by <b style="color:var(--text);">${escHtml(item.deletedBy)}</b> (${item.deletedByType}) · ${deletedAt}
-          ${item.linkedItems && item.linkedItems.length ? ` · +${item.linkedItems.length} linked record${item.linkedItems.length!==1?'s':''}` : ''}
+
+  const typeIcons = {finance:'💰',invoice:'🧾',delivery:'📦',expense:'💸',material:'🧴',reminder:'🔔'};
+  const typeLabels = {finance:'Finance Record',invoice:'Invoice',delivery:'Delivery',expense:'Expense',material:'Material',reminder:'Reminder'};
+
+  el.innerHTML = DB.recycleBin.map((item, idx) => {
+    if (!item || !item.id || !item.data) return '';
+    const deletedAt = item.deletedAt ? new Date(item.deletedAt).toLocaleString('en-GB',{day:'2-digit',month:'short',year:'numeric',hour:'2-digit',minute:'2-digit'}) : '—';
+    const expiresDate = item.expiresAt ? new Date(item.expiresAt).toLocaleDateString('en-GB',{day:'2-digit',month:'short',year:'numeric'}) : '—';
+    const daysLeft = item.expiresAt ? Math.max(0, Math.ceil((new Date(item.expiresAt) - Date.now()) / 86400000)) : 0;
+    const urgencyColor = daysLeft <= 3 ? 'var(--danger)' : daysLeft <= 7 ? 'var(--accent)' : 'var(--success)';
+
+    // Get display name from data
+    const d = item.data || {};
+    const name = d.customer || d.customerName || d.item || d.name || d.title || d.id || '(unnamed)';
+
+    // Build detail line based on type
+    let detail = '';
+    if (item.type === 'finance') detail = `${d.month || ''} · ${(d.amount||0).toLocaleString()} FCFA · ${d.status || ''}`;
+    else if (item.type === 'invoice') detail = `${(d.total||0).toLocaleString()} FCFA · ${d.serviceTypes || ''}`;
+    else if (item.type === 'expense') detail = `${(d.amount||0).toLocaleString()} FCFA · ${d.category || ''}`;
+    else if (item.type === 'delivery') detail = `Collected: ${d.collectionDate || '—'} · ${d.serviceTypes || ''}`;
+    else if (item.type === 'material') detail = `Priority: ${d.priority || '—'} · ${d.notes || ''}`;
+    else if (item.type === 'reminder') detail = `${d.datetime || '—'} · ${d.type || ''}`;
+
+    const linkedCount = Array.isArray(item.linkedItems) ? item.linkedItems.length : 0;
+    const typeIcon = typeIcons[item.type] || '📄';
+    const typeLabel = typeLabels[item.type] || item.type;
+
+    return `<div style="background:var(--surface2);border:1px solid var(--border);border-radius:12px;padding:1rem 1.1rem;margin-bottom:0.8rem;display:flex;align-items:flex-start;gap:0.9rem;flex-wrap:wrap;">
+      <div style="font-size:1.6rem;flex-shrink:0;padding-top:0.1rem;">${typeIcon}</div>
+      <div style="flex:1;min-width:180px;">
+        <div style="display:flex;align-items:center;gap:0.5rem;flex-wrap:wrap;margin-bottom:0.2rem;">
+          <span style="font-weight:700;font-size:0.92rem;">${escHtml(name)}</span>
+          <span class="badge" style="background:rgba(255,255,255,0.07);border:1px solid var(--border);font-size:0.6rem;color:var(--muted);">${typeLabel}</span>
+          ${linkedCount > 0 ? `<span class="badge" style="background:rgba(116,185,255,0.12);border:1px solid rgba(116,185,255,0.3);font-size:0.6rem;color:var(--info);">+${linkedCount} linked</span>` : ''}
         </div>
-        <div style="font-size:0.7rem;margin-top:0.3rem;color:${urgency};">⏳ ${daysLeft} day${daysLeft!==1?'s':''} left before permanent deletion (${expiresAt})</div>
+        ${detail ? `<div style="font-size:0.75rem;color:var(--text);margin-bottom:0.3rem;opacity:0.75;">${escHtml(detail)}</div>` : ''}
+        <div style="font-size:0.7rem;color:var(--muted);font-family:'DM Mono',monospace;">
+          Deleted by <b style="color:var(--text);">${escHtml(item.deletedBy||'?')}</b> · ${deletedAt}
+        </div>
+        <div style="font-size:0.7rem;margin-top:0.25rem;font-family:'DM Mono',monospace;">
+          <span style="color:${urgencyColor};">⏳ ${daysLeft}d left</span>
+          <span style="color:var(--muted);"> · Expires ${expiresDate}</span>
+        </div>
       </div>
-      <div style="display:flex;gap:0.4rem;flex-shrink:0;flex-wrap:wrap;">
-        <button class="btn btn-sm btn-success" onclick="restoreFromBin('${item.id}')">↩ Restore</button>
-        <button class="btn btn-sm btn-danger" onclick="permanentDeleteBinItem('${item.id}')">✕ Delete</button>
+      <div style="display:flex;flex-direction:column;gap:0.4rem;flex-shrink:0;min-width:110px;">
+        <button class="btn btn-sm btn-success" onclick="restoreFromBin('${item.id}')" style="width:100%;justify-content:center;">↩ Restore</button>
+        <button class="btn btn-sm btn-danger" onclick="permanentDeleteBinItem('${item.id}')" style="width:100%;justify-content:center;font-size:0.72rem;">✕ Delete Forever</button>
       </div>
     </div>`;
-  }).join('');
+  }).filter(Boolean).join('');
 }
 
 // ── Modified deleteFinRecord → moves to recycle bin ──────────────
@@ -4460,41 +4556,98 @@ function _saveLogToDownloadsFolder() {
 
 function manualSaveToDownloads() {
   if (!_canAccessDownloads()) { showToast('Access denied.', true); return; }
-  const before = (DB.appDownloads || []).length;
   _saveLogToDownloadsFolder();
-  const after = (DB.appDownloads || []).length;
   saveData(true);
   logActivity('Manual Log Save', 'Manually saved log to in-app Downloads folder');
   showToast('Log saved to Downloads folder + device download started ✓');
+  _updateBinNavCount();
   renderDownloadsFolder();
 }
 
 function renderDownloadsFolder() {
   const el = document.getElementById('downloads-folder-list');
   if (!el) return;
+
+  // Update nav badge count
+  const navDlBtn = document.getElementById('nav-downloads');
+  if (navDlBtn) {
+    const count = (DB.appDownloads || []).length;
+    const existing = navDlBtn.querySelector('.dl-count');
+    if (existing) existing.remove();
+    if (count > 0) {
+      const badge = document.createElement('span');
+      badge.className = 'dl-count';
+      badge.style.cssText = 'background:rgba(78,205,196,0.25);color:var(--accent2);border-radius:10px;padding:0.05rem 0.35rem;font-size:0.65rem;font-family:\'DM Mono\',monospace;margin-left:0.25rem;';
+      badge.textContent = count;
+      navDlBtn.appendChild(badge);
+    }
+  }
+
+  // Update header count
+  const headerCount = document.getElementById('downloads-header-count');
+  if (headerCount) {
+    const c = (DB.appDownloads || []).length;
+    headerCount.textContent = c ? `${c} log${c !== 1 ? 's' : ''} stored` : 'No logs yet';
+  }
+
   if (!_canAccessDownloads()) {
-    el.innerHTML = '<div class="empty-state"><div class="icon">🔒</div><div>Access restricted. Super User only unless delegated.</div></div>';
+    el.innerHTML = `<div class="empty-state" style="padding:3rem;">
+      <div class="icon" style="font-size:2.5rem;">🔒</div>
+      <div style="margin-top:0.5rem;">Access restricted to Super User only.</div>
+      <div style="font-size:0.78rem;color:var(--muted);margin-top:0.3rem;">The Super User can delegate access to specific admin accounts.</div>
+    </div>`;
+    const card = document.getElementById('delegate-access-card');
+    if (card) card.style.display = 'none';
     return;
   }
+
+  const card = document.getElementById('delegate-access-card');
+  if (card) card.style.display = currentAccountType === 'superuser' ? '' : 'none';
+
   if (!DB.appDownloads || DB.appDownloads.length === 0) {
-    el.innerHTML = '<div class="empty-state"><div class="icon">📂</div><div>No logs saved yet. Logs are auto-saved on first logout of each day.</div></div>';
+    el.innerHTML = `<div class="empty-state" style="padding:3rem;">
+      <div class="icon" style="font-size:2.5rem;">📂</div>
+      <div style="margin-top:0.5rem;">No logs saved yet.</div>
+      <div style="font-size:0.78rem;color:var(--muted);margin-top:0.3rem;">Logs are auto-saved on your first logout of each day, or click <b>💾 Save Log Now</b> above.</div>
+    </div>`;
     return;
   }
-  el.innerHTML = DB.appDownloads.map(dl => {
-    const savedAt = new Date(dl.savedAt).toLocaleString('en-GB',{day:'2-digit',month:'short',year:'numeric',hour:'2-digit',minute:'2-digit'});
-    const typeLabel = dl.type === 'auto' ? '🤖 Auto' : '👤 Manual';
-    return `<div style="background:var(--surface2);border:1px solid var(--border);border-radius:10px;padding:0.85rem 1rem;margin-bottom:0.6rem;display:flex;align-items:center;gap:0.8rem;flex-wrap:wrap;">
-      <div style="flex:1;min-width:0;">
-        <div style="font-family:'DM Mono',monospace;font-size:0.82rem;font-weight:600;color:var(--accent);">${escHtml(dl.filename)}</div>
-        <div style="font-size:0.7rem;color:var(--muted);margin-top:0.2rem;">${typeLabel} · ${savedAt} · ${dl.size}</div>
-      </div>
-      <div style="display:flex;gap:0.4rem;flex-shrink:0;flex-wrap:wrap;">
-        <button class="btn btn-sm btn-secondary" onclick="downloadLogFile('${dl.id}')" title="Download to device">⬇ Download</button>
-        <button class="btn btn-sm" style="background:rgba(78,205,196,0.15);border:1px solid rgba(78,205,196,0.4);color:var(--accent2);" onclick="importLogFromDownloads('${dl.id}')" title="Import into app">↩ Import</button>
-        <button class="btn btn-sm btn-danger" onclick="deleteDownloadEntry('${dl.id}')" title="Delete this log">✕</button>
+
+  el.innerHTML = DB.appDownloads.map((dl, idx) => {
+    if (!dl || !dl.id) return '';
+    const savedAt = dl.savedAt ? new Date(dl.savedAt).toLocaleString('en-GB',{day:'2-digit',month:'short',year:'numeric',hour:'2-digit',minute:'2-digit'}) : '—';
+    const typeLabel = dl.type === 'auto' ? '<span style="color:var(--accent2);">🤖 Auto</span>' : '<span style="color:var(--purple);">👤 Manual</span>';
+    const size = dl.size || '—';
+    const num = DB.appDownloads.length - idx; // newest = highest number
+
+    // Quick summary if available
+    let summary = '';
+    if (dl.json) {
+      try {
+        const parsed = JSON.parse(dl.json);
+        const invCount = (parsed.invoices||[]).length;
+        const finCount = (parsed.finance||[]).length;
+        const logCount = (parsed.activityLog||[]).length;
+        summary = `${invCount} invoices · ${finCount} finance records · ${logCount} log entries`;
+      } catch(e) { summary = ''; }
+    }
+
+    return `<div style="background:var(--surface2);border:1px solid var(--border);border-radius:12px;padding:1rem 1.1rem;margin-bottom:0.8rem;">
+      <div style="display:flex;align-items:flex-start;gap:0.8rem;flex-wrap:wrap;">
+        <div style="background:rgba(78,205,196,0.12);border:1px solid rgba(78,205,196,0.3);border-radius:8px;padding:0.3rem 0.6rem;font-family:'DM Mono',monospace;font-size:0.7rem;color:var(--accent2);flex-shrink:0;min-width:2.2rem;text-align:center;">#${num}</div>
+        <div style="flex:1;min-width:200px;">
+          <div style="font-family:'DM Mono',monospace;font-size:0.8rem;font-weight:600;color:var(--accent);word-break:break-all;">${escHtml(dl.filename||'unnamed')}</div>
+          <div style="font-size:0.72rem;color:var(--muted);margin-top:0.25rem;">${typeLabel} · ${savedAt} · <b style="color:var(--text);">${size}</b></div>
+          ${summary ? `<div style="font-size:0.7rem;color:var(--muted);margin-top:0.2rem;font-family:'DM Mono',monospace;">${escHtml(summary)}</div>` : ''}
+        </div>
+        <div style="display:flex;flex-direction:column;gap:0.4rem;flex-shrink:0;min-width:120px;">
+          <button class="btn btn-sm" style="background:rgba(81,207,102,0.12);border:1px solid rgba(81,207,102,0.35);color:var(--success);justify-content:center;" onclick="downloadLogFile('${dl.id}')">⬇ Download</button>
+          <button class="btn btn-sm" style="background:rgba(78,205,196,0.12);border:1px solid rgba(78,205,196,0.35);color:var(--accent2);justify-content:center;" onclick="importLogFromDownloads('${dl.id}')">↩ Import</button>
+          <button class="btn btn-sm btn-danger" style="justify-content:center;font-size:0.72rem;" onclick="deleteDownloadEntry('${dl.id}')">✕ Delete</button>
+        </div>
       </div>
     </div>`;
-  }).join('');
+  }).filter(Boolean).join('');
 }
 
 function downloadLogFile(dlId) {
@@ -4543,6 +4696,7 @@ function deleteDownloadEntry(dlId) {
   saveData(true);
   logActivity('Delete Download Entry', `Deleted log entry from downloads folder`);
   showToast('Log entry deleted ✓');
+  _updateBinNavCount();
   renderDownloadsFolder();
 }
 
@@ -6504,7 +6658,7 @@ function logAdminActivity(action, detail) {
 function saveAdminDataPackage() {
   const pkg = {
     _type: 'admin_data_package',
-    _appVersion: '3.1',
+    _appVersion: '9.0',
     _exportedAt: new Date().toISOString(),
     _adminUser: DB.adminCredentials.username,
     // All data arrays — complete snapshot
@@ -6572,18 +6726,11 @@ function importAdminData(input) {
       if (Array.isArray(pkg.activityLog)) {
         pkg.activityLog.forEach(a => {
           if (!DB.adminActivityLog.find(x => x.id === a.id)) DB.adminActivityLog.push(a);
+          // Also merge into unified activityLog
+          if (!DB.activityLog.find(x => x.id === a.id)) {
+            DB.activityLog.push({ ...a, accountType: a.accountType || 'admin', username: a.username || DB.adminCredentials.username || 'admin' });
+          }
         });
-      }
-
-      // Show activity log
-      const logEl = document.getElementById('admin-activity-log');
-      const listEl = document.getElementById('admin-activity-list');
-      if (logEl && listEl && pkg.activityLog && pkg.activityLog.length > 0) {
-        logEl.style.display = 'block';
-        listEl.innerHTML = pkg.activityLog.map(a => {
-          const ts = new Date(a.timestamp).toLocaleString('en-GB',{day:'2-digit',month:'short',hour:'2-digit',minute:'2-digit'});
-          return `<div class="activity-item"><div><b>${escHtml(a.action)}</b> — ${escHtml(a.detail)}</div><div class="act-time">${ts}</div></div>`;
-        }).join('');
       }
 
       requestAnimationFrame(() => {
@@ -6599,24 +6746,34 @@ function importAdminData(input) {
 }
 
 // ══════════════════════════════════════════════════════════════════
-// VERSION MIGRATION — normalise records from any older save file
+// VERSION MIGRATION — normalise records from ANY older save file
+// Compatible: v3.x → v9.x  |  Future: new fields get safe defaults
 // ══════════════════════════════════════════════════════════════════
 function migrateRecord(r) {
   if (!r || typeof r !== 'object') return r;
   const out = Object.assign({}, r);
-  // Finance: ensure all expected fields exist
-  if ('amount' in out) {
+
+  // ── GUARD: never migrate recycleBin or appDownloads entries ──────
+  // These are handled separately. Bin items have {id, type, data, expiresAt}.
+  if ('expiresAt' in out && 'deletedAt' in out && 'type' in out && 'data' in out) return out;
+  // appDownloads items have {id, filename, json, savedAt, size, type}
+  if ('filename' in out && 'json' in out && 'savedAt' in out) return out;
+
+  // ── FINANCE record ────────────────────────────────────────────────
+  if ('amount' in out && !('invoiceText' in out) && !('collectionDate' in out && 'items' in out)) {
     if (out.paidAmount === undefined) out.paidAmount = 0;
     if (!out.status) out.status = out.paidAmount >= out.amount ? 'paid' : out.paidAmount > 0 ? 'partial' : 'unpaid';
     if (!out.paymentMethod) out.paymentMethod = '-';
     if (!out.date) out.date = '';
     if (!out.customer) out.customer = '';
     if (!out.month) out.month = '';
-    // V7: dateModified — default to date if missing (backward compat for old records)
     if (!out.dateModified) out.dateModified = out.date || '';
+    if (out.invoiceId === undefined) out.invoiceId = null;
+    if (!out.id) out.id = 'fin_' + Date.now() + '_' + Math.random().toString(36).slice(2,6);
   }
-  // Invoice: ensure all expected fields
-  if ('invoiceText' in out || 'collectionDate' in out) {
+
+  // ── INVOICE record ────────────────────────────────────────────────
+  if ('invoiceText' in out || ('collectionDate' in out && 'items' in out)) {
     if (out.paymentStatus === undefined) out.paymentStatus = 'unpaid';
     if (out.paidAmount === undefined) out.paidAmount = 0;
     if (out.sent === undefined) out.sent = false;
@@ -6624,11 +6781,13 @@ function migrateRecord(r) {
     if (!Array.isArray(out.items)) out.items = [];
     if (out.bagCost === undefined) out.bagCost = 0;
     if (out.bagIncluded === undefined) out.bagIncluded = true;
-    // V7: parcelingIncluded — default true for existing invoices
     if (out.parcelingIncluded === undefined) out.parcelingIncluded = true;
     if (out.total === undefined) out.total = 0;
-    // Migrate items: ensure all expected fields
+    if (!out.date) out.date = '';
+    if (!out.customerName) out.customerName = '';
+    if (!out.id) out.id = 'inv_' + Date.now() + '_' + Math.random().toString(36).slice(2,6);
     out.items = out.items.map(it => {
+      if (!it || typeof it !== 'object') return it;
       if (it.dressType === undefined) it.dressType = null;
       if (!it.color) it.color = 'Colored';
       if (it.subtotal === undefined) it.subtotal = (it.qty||0) * (it.unitPrice||0);
@@ -6638,26 +6797,52 @@ function migrateRecord(r) {
       return it;
     });
   }
-  // Delivery: ensure all fields
-  if ('collectionDate' in out && !('amount' in out)) {
+
+  // ── DELIVERY record ────────────────────────────────────────────────
+  if ('collectionDate' in out && !('amount' in out) && !('items' in out)) {
     if (!out.status) out.status = 'pending';
     if (out.deliveredDate === undefined) out.deliveredDate = null;
     if (!out.customer) out.customer = '';
     if (!out.serviceTypes) out.serviceTypes = 'wash_only';
     if (!out.expectedDate) out.expectedDate = '';
-    if (!out.id) out.id = 'del_' + Math.random().toString(36).slice(2);
+    if (!out.id) out.id = 'del_' + Date.now() + '_' + Math.random().toString(36).slice(2,6);
+    if (out.invoiceId === undefined) out.invoiceId = null;
   }
-  // Expense: ensure id and date
-  if ('category' in out) {
-    if (!out.id) out.id = 'exp_' + Math.random().toString(36).slice(2);
+
+  // ── EXPENSE record ────────────────────────────────────────────────
+  if ('category' in out && 'item' in out && !('collectionDate' in out)) {
+    if (!out.id) out.id = 'exp_' + Date.now() + '_' + Math.random().toString(36).slice(2,6);
     if (!out.date) out.date = '';
     if (!out.amount) out.amount = 0;
     if (!out.item) out.item = '';
+    if (!out.category) out.category = 'other';
   }
-  // Reminder: ensure done field
-  if ('datetime' in out && out.done === undefined) out.done = false;
-  // Finance: ensure invoiceId field (may be missing on legacy records)
-  if ('amount' in out && out.invoiceId === undefined) out.invoiceId = null;
+
+  // ── REMINDER record ────────────────────────────────────────────────
+  if ('datetime' in out) {
+    if (out.done === undefined) out.done = false;
+    if (!out.priority) out.priority = 'medium';
+    if (!out.type) out.type = 'general';
+    if (!out.id) out.id = 'rem_' + Date.now() + '_' + Math.random().toString(36).slice(2,6);
+  }
+
+  // ── MATERIAL record ────────────────────────────────────────────────
+  if ('purchaseDate' in out || ('name' in out && 'priority' in out)) {
+    if (!out.id) out.id = 'mat_' + Date.now() + '_' + Math.random().toString(36).slice(2,6);
+    if (!out.priority) out.priority = 'medium';
+    if (!out.name) out.name = '';
+    if (out.notes === undefined) out.notes = '';
+  }
+
+  // ── ACTIVITY LOG entry ─────────────────────────────────────────────
+  if ('action' in out && 'timestamp' in out && !('amount' in out)) {
+    if (!out.accountType) out.accountType = 'unknown';
+    if (!out.username) out.username = '?';
+    if (!out.detail) out.detail = '';
+    if (!out.page) out.page = '';
+    if (!out.id) out.id = 'al_' + Date.now() + '_' + Math.random().toString(36).slice(2,6);
+  }
+
   return out;
 }
 
@@ -6669,7 +6854,7 @@ let _autoSaveTimer2 = null;
 function saveData(immediate) {
   // Always save to localStorage immediately to prevent data loss on refresh
   try {
-    const saveObjLocal = { ...DB, _appVersion: '7.0', _savedAt: new Date().toISOString() };
+    const saveObjLocal = { ...DB, _appVersion: '9.0', _savedAt: new Date().toISOString() };
     localStorage.setItem('washnfold_db', JSON.stringify(saveObjLocal));
   } catch(e) { /* silent */; }
 
@@ -6710,7 +6895,7 @@ async function _doCloudSave() {
 }
 
 function exportDataBackup() {
-  const saveObj = { ...DB, _appVersion: '7.0', _savedAt: new Date().toISOString(),
+  const saveObj = { ...DB, _appVersion: '9.0', _savedAt: new Date().toISOString(),
     _schema: { invoiceFields: ['id','date','customerName','collectionDate','deliveryDate','items','total','paymentStatus','paidAmount','serviceTypes','invoiceText'],
                financeFields: ['id','customer','month','amount','paidAmount','status','paymentMethod','date','invoiceId'],
                deliveryFields: ['id','invoiceId','customer','serviceTypes','collectionDate','expectedDate','status','deliveredDate'] } };
