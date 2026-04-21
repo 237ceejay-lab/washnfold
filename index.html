@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Washn' Fold — Management System V8</title>
+<title>Washn' Fold — Management System V9</title>
 
 <!-- Fonts: try Google Fonts first, fall back to system fonts gracefully on blocked networks -->
 <!-- Fonts loaded non-blocking — page renders instantly even if fonts.googleapis.com
@@ -471,9 +471,8 @@ body:not(.logged-in) #app { display: none !important; }
   .app-header { padding:0.6rem 0.85rem; }
   .app-header h1 { font-size:1.1rem; }
   .header-badge { display:none; }
-  #autosave-indicator { display:none; }
+  #autosave-indicator { font-size:0.7rem; }
   .view-toggle-btn { display:none; }
-  #online-users-badge { display:none !important; }
   .header-actions { gap:0.5rem; }
   #logout-btn { padding:0.4rem 0.7rem !important; font-size:0.76rem !important; }
   .nav-btn { padding:0.7rem 0.85rem; font-size:0.74rem; }
@@ -564,7 +563,7 @@ body.mobile-view .card-title-row { flex-direction: column; align-items: flex-sta
   <div class="login-box">
     <div style="font-family:'DM Mono',monospace;font-size:0.7rem;letter-spacing:0.3em;color:var(--accent);margin-bottom:0.5rem;">✦ WASHN' FOLD</div>
     <h1>Management</h1>
-    <p class="sub">Laundry Service Software v8.0</p>
+    <p class="sub">Laundry Service Software v9.0</p>
     <div id="login-form">
       <div class="form-group" style="margin-bottom:1rem;text-align:left;">
         <label>Username</label>
@@ -662,6 +661,8 @@ body.mobile-view .card-title-row { flex-direction: column; align-items: flex-sta
     <button class="nav-btn" onclick="showPage('expenses')" data-page="expenses" data-perm="expenses"><span class="icon">💸</span>Expenses</button>
     <button class="nav-btn" onclick="showPage('reports')" data-page="reports" data-perm="reports"><span class="icon">📄</span>Reports</button>
     <button class="nav-btn" onclick="showPage('settings')" data-page="settings" data-perm="settings"><span class="icon">⚙️</span>Settings</button>
+    <button class="nav-btn" onclick="showPage('recycle')" data-page="recycle" id="nav-recycle"><span class="icon">🗑️</span>Bin <span id="bin-nav-count" style="background:rgba(255,107,107,0.25);color:var(--danger);border-radius:10px;padding:0.05rem 0.35rem;font-size:0.65rem;font-family:'DM Mono',monospace;"></span></button>
+    <button class="nav-btn" onclick="showPage('downloads')" data-page="downloads" id="nav-downloads" style="display:none;"><span class="icon">📂</span>Downloads</button>
     <button class="nav-btn" id="nav-superuser" onclick="showPage('superuser')" data-page="superuser" style="display:none;"><span class="icon">👑</span>Super User</button>
   </nav>
 
@@ -1734,6 +1735,16 @@ body.mobile-view .card-title-row { flex-direction: column; align-items: flex-sta
     <div id="su-audit-log-list" style="max-height:500px;overflow-y:auto;"></div>
   </div>
 
+  <!-- Downloads Folder quick link -->
+  <div class="card" style="border-color:rgba(78,205,196,0.35);background:rgba(78,205,196,0.04);">
+    <div class="card-title" style="color:var(--accent2);">▸ 📂 In-App Downloads Folder</div>
+    <p style="font-size:0.82rem;color:var(--muted);margin-bottom:0.8rem;">Automatic daily log backups are stored here. Use the Downloads tab in the nav to manage them. Only you (Super User) and accounts you delegate can access this.</p>
+    <div style="display:flex;gap:0.7rem;flex-wrap:wrap;">
+      <button class="btn btn-sm" style="background:rgba(78,205,196,0.15);border:1px solid rgba(78,205,196,0.4);color:var(--accent2);" onclick="showPage('downloads')">📂 Open Downloads Folder</button>
+      <button class="btn btn-sm btn-secondary" onclick="manualSaveToDownloads()">💾 Save Log Now</button>
+    </div>
+  </div>
+
   <!-- Clear All Data - Super User Only -->
   <div class="card" style="border-color:rgba(255,107,107,0.5);background:rgba(255,107,107,0.04);">
     <div class="card-title" style="color:var(--danger);">▸ Danger Zone — Clear All Data</div>
@@ -1925,6 +1936,43 @@ body.mobile-view .card-title-row { flex-direction: column; align-items: flex-sta
       </div>
     </div>
   </div>
+<!-- ════════════════════════════════════════════════════
+     RECYCLE BIN PAGE
+════════════════════════════════════════════════════ -->
+<div class="page" id="page-recycle">
+  <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:0.8rem;margin-bottom:1.2rem;">
+    <h2 class="section-title" style="margin-bottom:0;">🗑️ Recycle Bin <span id="recycle-bin-count" style="font-size:0.75rem;color:var(--muted);font-family:'DM Mono',monospace;"></span></h2>
+    <button class="btn btn-danger btn-sm" onclick="emptyRecycleBin()">🗑 Empty Bin</button>
+  </div>
+  <div class="card" style="margin-bottom:1rem;background:rgba(255,107,107,0.05);border-color:rgba(255,107,107,0.25);">
+    <div style="font-size:0.82rem;color:var(--muted);line-height:1.6;">
+      ♻️ Deleted records are kept here for <b style="color:var(--text);">30 days</b> before being permanently removed. Click <b style="color:var(--success);">↩ Restore</b> to bring any item back — it will immediately reappear in its original location across the entire app (invoices, departments, deliveries, etc). Records restored from bin automatically re-synchronise everywhere.
+    </div>
+  </div>
+  <div id="recycle-bin-list"></div>
+</div>
+
+<!-- ════════════════════════════════════════════════════
+     DOWNLOADS FOLDER PAGE
+════════════════════════════════════════════════════ -->
+<div class="page" id="page-downloads">
+  <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:0.8rem;margin-bottom:1.2rem;">
+    <h2 class="section-title" style="margin-bottom:0;">📂 In-App Downloads Folder</h2>
+    <button class="btn btn-primary btn-sm" onclick="manualSaveToDownloads()">💾 Save Log Now</button>
+  </div>
+  <div class="card" style="margin-bottom:1rem;background:rgba(78,205,196,0.05);border-color:rgba(78,205,196,0.25);">
+    <div style="font-size:0.82rem;color:var(--muted);line-height:1.7;">
+      🔒 <b style="color:var(--text);">Super User only</b> (unless delegated). This folder automatically receives a complete JSON log backup on the <b style="color:var(--text);">first logout of each day</b>. These logs are <b style="color:var(--accent);">permanent</b> — they are never deleted automatically even if data is lost elsewhere. Up to 90 days of logs are stored here.<br>
+      Use <b style="color:var(--success);">⬇ Download</b> to save to your device · <b style="color:var(--accent2);">↩ Import</b> to restore app data from a log · <b style="color:var(--danger);">✕</b> to remove a log entry.
+    </div>
+  </div>
+  <div id="downloads-folder-list"></div>
+  <div class="card" style="margin-top:1.2rem;" id="delegate-access-card">
+    <div class="card-title">🔑 Delegate Downloads Access</div>
+    <p style="font-size:0.82rem;color:var(--muted);margin-bottom:0.8rem;">Grant specific admin/staff accounts access to this folder. Super User always has access regardless.</p>
+    <div id="delegate-access-list"></div>
+    <button class="btn btn-secondary btn-sm" style="margin-top:0.8rem;" onclick="saveData();showToast('Access settings saved ✓');">💾 Save Settings</button>
+  </div>
 </div>
 
 <div class="toast" id="toast"></div>
@@ -1939,6 +1987,8 @@ let DB = {
   adminCredentials: { username: 'admin', password: '2026' }, // legacy single admin kept for migration
   adminAccounts: [], // [{id, label, username, password, permissions:{}, welcomeMessage, suspended}]
   adminPermissions: { overview: false, invoice: true, invoices: true, finance: false, delivery: true, departments: false, materials: false, planner: false, expenses: true, reports: false, settings: false },
+  recycleBin: [], // [{id, type, data, deletedBy, deletedAt, expiresAt}]
+  appDownloads: [], // [{id, filename, json, savedAt, size, type}] — permanent in-app log archive
   settings: { delMin: 3, delMax: 4, preDays: 1.5, postDays: 1.5, 
     welcomeMessage: "Welcome Madam,\nThe Manager of\nWashn' Fold Laundry Service",
     superUserWelcomeMessage: "Welcome,\nSuper User\nWashn' Fold Control Panel",
@@ -1949,7 +1999,9 @@ let DB = {
     emailjsPublicKey: '',
     emailjsServiceId: '',
     emailjsTemplateId: '',
-    lastLogSentAt: null
+    lastLogSentAt: null,
+    lastDailyLogDate: null,  // track which calendar date we last did first-logout download
+    downloadsAccessList: []  // accountIds delegated download-folder access by super user
   },
   prices: {
     light_dresses:     { label:'Light Dresses',               wo_colored:100, wo_white:150, wi_colored_casual:200, wi_colored_formal:250, wi_white:250 },
@@ -2225,7 +2277,7 @@ async function loadCloudDataAndProceed() {
 
 function mergeLoadedData(loaded) {
   if (!loaded || typeof loaded !== 'object') return;
-  const ARRAY_KEYS = ['invoices','finance','deliveries','materials','reminders','expenses','notifications','deptHistory','adminActivityLog','activityLog'];
+  const ARRAY_KEYS = ['invoices','finance','deliveries','materials','reminders','expenses','notifications','deptHistory','adminActivityLog','activityLog','recycleBin','appDownloads'];
   ARRAY_KEYS.forEach(key => {
     if (Array.isArray(loaded[key])) DB[key] = loaded[key].map(migrateRecord);
   });
@@ -2296,24 +2348,41 @@ function loginImportAndProceed(input) {
 function confirmLogout(isAuto) {
   if (!isAuto && !confirm('Are you sure you want to log out?')) return;
   logActivity('Logout', isAuto ? 'Auto-logout due to inactivity' : 'Manual logout');
+
   const btn = document.getElementById('logout-btn');
   if (btn) { btn.textContent = '⏳ Saving...'; btn.disabled = true; }
-  const saveObj = { ...DB, _appVersion: '7.0', _savedAt: new Date().toISOString() };
+
+  // ── Step 1: Synchronous localStorage save (instant, never fails) ──
+  const saveObj = { ...DB, _appVersion: '9.0', _savedAt: new Date().toISOString() };
   const jsonStr = JSON.stringify(saveObj);
   try { localStorage.setItem('washnfold_db', jsonStr); } catch(e) {}
-  const finish = () => {
+
+  // ── Step 2: First-logout-of-day: save log to in-app Downloads folder ──
+  const todayStr = new Date().toISOString().split('T')[0];
+  if (DB.settings.lastDailyLogDate !== todayStr) {
+    DB.settings.lastDailyLogDate = todayStr;
+    _saveLogToDownloadsFolder();
+    // Re-save with updated lastDailyLogDate
+    try { localStorage.setItem('washnfold_db', JSON.stringify({ ...DB, _appVersion: '9.0', _savedAt: new Date().toISOString() })); } catch(e) {}
+  }
+
+  // ── Step 3: Fire Firebase save in background (don't wait — 800ms timeout) ──
+  let _fbDone = false;
+  const _proceedLogout = () => {
+    if (_fbDone) return;
+    _fbDone = true;
     showToast('Data saved — logging out ✓');
-    // Only trigger fallback log send if EmailJS is NOT configured
-    // AND at least 3.5 days have passed since the last send
-    if (!isEmailJSConfigured()) {
-      maybeSendFallbackLog();
-    }
-    setTimeout(doLogout, 1200);
+    if (!isEmailJSConfigured()) maybeSendFallbackLog();
+    setTimeout(doLogout, 600);
   };
-  if (window._fbSetData) {
-    window._fbSetData(jsonStr).then(finish).catch(finish);
+
+  if (window._fbSetData && !window._firebaseBlocked) {
+    // Give Firebase max 2.5 seconds; if it takes longer, logout anyway (data is in localStorage)
+    const _fbTimeout = setTimeout(_proceedLogout, 2500);
+    window._fbSetData(jsonStr).then(() => { clearTimeout(_fbTimeout); _proceedLogout(); }).catch(() => { clearTimeout(_fbTimeout); _proceedLogout(); });
   } else {
-    finish();
+    // No Firebase — logout immediately after short UI feedback delay
+    setTimeout(_proceedLogout, 400);
   }
 }
 
@@ -2529,22 +2598,30 @@ function stopInactivityTracking() {
   });
 }
 
-// ── Unified Activity Logger ─────────────────────────────────────────
+// ── Unified Activity Logger — always stamps the actual logged-in user ─
 function logActivity(action, detail, page) {
   if (!Array.isArray(DB.activityLog)) DB.activityLog = [];
-  DB.activityLog.unshift({
+  const entry = {
     id: 'al_' + Date.now() + '_' + Math.random().toString(36).slice(2,6),
     timestamp: new Date().toISOString(),
     accountType: currentAccountType || 'unknown',
     username: currentAccountUsername || '?',
-    action, detail: detail || '',
+    action,
+    detail: detail || '',
     page: page || ''
-  });
+  };
+  DB.activityLog.unshift(entry);
   if (DB.activityLog.length > 2000) DB.activityLog = DB.activityLog.slice(0, 2000);
-  // Also mirror to legacy log for backward compat
+  // Mirror to legacy log only for backward compat — keep username correct
   if (!Array.isArray(DB.adminActivityLog)) DB.adminActivityLog = [];
-  DB.adminActivityLog.unshift({ id: 'al_' + Date.now(), timestamp: new Date().toISOString(), action, detail: detail || '' });
-  if (DB.adminActivityLog.length > 200) DB.adminActivityLog = DB.adminActivityLog.slice(0, 200);
+  DB.adminActivityLog.unshift({
+    id: entry.id,
+    timestamp: entry.timestamp,
+    accountType: entry.accountType,
+    username: entry.username,
+    action, detail: detail || ''
+  });
+  if (DB.adminActivityLog.length > 500) DB.adminActivityLog = DB.adminActivityLog.slice(0, 500);
 }
 
 function logActivityAnon(action, detail) {
@@ -2552,7 +2629,7 @@ function logActivityAnon(action, detail) {
   DB.activityLog.unshift({
     id: 'al_' + Date.now(),
     timestamp: new Date().toISOString(),
-    accountType: 'unknown', username: '?',
+    accountType: 'unknown', username: '(pre-login)',
     action, detail: detail || '', page: ''
   });
   if (DB.activityLog.length > 2000) DB.activityLog = DB.activityLog.slice(0, 2000);
@@ -2651,6 +2728,8 @@ function initApp() {
   applyAccountRestrictions();
   renderAll();
   renderDeptHistory();
+  _purgeExpiredBinItems(); // clean up expired bin items on every login
+  _updateBinNavCount();
   checkRemindersAndAlerts();
   if (_reminderIntervalId) clearInterval(_reminderIntervalId);
   _reminderIntervalId = setInterval(checkRemindersAndAlerts, 60000);
@@ -2743,8 +2822,10 @@ function applyAccountRestrictions() {
   const badge = document.getElementById('account-badge');
   if (badge) {
     if (isSuperUser) badge.innerHTML = '<span class="admin-badge" style="background:rgba(232,197,71,0.15);border-color:rgba(232,197,71,0.5);color:var(--accent);">👑 Super User</span>';
-    else if (isAdmin) badge.innerHTML = '<span class="admin-badge">🔧 Admin Account</span>';
-    else badge.innerHTML = 'Management System';
+    else if (isAdmin) {
+      const acctLabel = (DB.adminAccounts||[]).find(a=>a.id===currentAdminAccountId)?.label || 'Admin';
+      badge.innerHTML = `<span class="admin-badge">🔧 ${escHtml(acctLabel)}</span>`;
+    } else badge.innerHTML = 'Management System';
   }
 
   // Get current admin account's permissions if admin
@@ -2758,10 +2839,18 @@ function applyAccountRestrictions() {
   const suNav = document.getElementById('nav-superuser');
   if (suNav) suNav.style.display = isSuperUser ? '' : 'none';
 
-  // Show/hide nav items
+  // Downloads nav: visible to super user and delegated accounts
+  const dlNav = document.getElementById('nav-downloads');
+  if (dlNav) dlNav.style.display = _canAccessDownloads() ? '' : 'none';
+
+  // Recycle bin nav: always visible to all logged-in users
+  const binNav = document.getElementById('nav-recycle');
+  if (binNav) binNav.style.display = '';
+
+  // Show/hide nav items based on perm
   document.querySelectorAll('#main-nav .nav-btn').forEach(btn => {
     const perm = btn.dataset.perm;
-    if (!perm) return;
+    if (!perm) return; // no perm attr = always visible (bin, downloads handled above)
     if (isSuperUser) {
       btn.style.display = ''; // super user sees all
     } else if (isAdmin) {
@@ -2784,6 +2873,7 @@ function applyAccountRestrictions() {
   }
   loadAdminPermGrid();
   loadSettingsUI();
+  _updateBinNavCount();
 }
 
 function renderAll() {
@@ -2793,6 +2883,7 @@ function renderAll() {
   renderReminders();
   renderExpenses();
   renderDeptHistory();
+  _updateBinNavCount();
   // Defer the heavy table renders to prevent UI freeze on large datasets
   requestAnimationFrame(() => {
     renderInvoicesList();
@@ -2802,6 +2893,13 @@ function renderAll() {
       renderFinance();
     });
   });
+}
+
+function _updateBinNavCount() {
+  _purgeExpiredBinItems && _purgeExpiredBinItems();
+  const count = (DB.recycleBin || []).length;
+  const el = document.getElementById('bin-nav-count');
+  if (el) el.textContent = count > 0 ? count : '';
 }
 
 // ══════════════════════════════════════════════════════════════════
@@ -2823,6 +2921,8 @@ function showPage(name) {
   if (name === 'materials') renderMaterials();
   if (name === 'planner') renderReminders();
   if (name === 'expenses') renderExpenses();
+  if (name === 'recycle') { renderRecycleBin(); _updateBinNavCount(); }
+  if (name === 'downloads') { renderDownloadsFolder(); renderDelegateList(); }
 }
 
 // ══════════════════════════════════════════════════════════════════
@@ -3429,45 +3529,41 @@ function viewInvoice(id) {
 function deleteInvoice(id) {
   const inv = DB.invoices.find(i => i.id === id);
   if (!inv) return;
-  if (!confirm(`Delete invoice for "${inv.customerName}" (${inv.total.toLocaleString()} FCFA)?\n\nThis will also remove the linked financial record and delivery entry. This cannot be undone.`)) return;
+  if (!confirm(`Move invoice for "${inv.customerName}" (${inv.total.toLocaleString()} FCFA) to Recycle Bin?\n\nLinked finance and delivery records will also move to bin.\nRestore within 30 days to get everything back.`)) return;
 
-  // 1. Remove invoice
+  const linkedItems = [];
+
+  // 1. Remove invoice + track linked records
   DB.invoices = DB.invoices.filter(i => i.id !== id);
-  logActivity('Invoice Deleted', `Invoice for ${inv.customerName} (${(inv.total||0).toLocaleString()} FCFA)`);
 
-  // 2. Remove linked finance record (prefer invoiceId, fallback to exact customer+amount+collectionDate)
-  const finBefore = DB.finance.length;
+  // 2. Move linked finance records to bin
   const _removedFin = [];
   DB.finance = DB.finance.filter(r => {
     const shouldRemove = (r.invoiceId && r.invoiceId === id) ||
                          (!r.invoiceId && r.customer === inv.customerName && r.amount === inv.total);
-    if (shouldRemove) _removedFin.push(r);
+    if (shouldRemove) { linkedItems.push({ type: 'finance', data: r }); _removedFin.push(r); }
     return !shouldRemove;
   });
-  // Track deleted seed IDs so re-seeding never resurrects them
   if (!DB.deletedSeedIds) DB.deletedSeedIds = [];
   _removedFin.forEach(r => {
     if (r.id && r.id.startsWith('fin_seed_') && !DB.deletedSeedIds.includes(r.id))
       DB.deletedSeedIds.push(r.id);
   });
-  const finRemoved = _removedFin.length;
 
-  // 3. Remove linked delivery record (prefer invoiceId, fallback to customer+collectionDate)
-  const delBefore = DB.deliveries.length;
+  // 3. Move linked delivery records to bin
   DB.deliveries = DB.deliveries.filter(d => {
-    if (d.invoiceId && d.invoiceId === id) return false;
-    if (!d.invoiceId && d.customer === inv.customerName && d.collectionDate === inv.collectionDate) return false;
-    return true;
+    const shouldRemove = (d.invoiceId && d.invoiceId === id) ||
+                         (!d.invoiceId && d.customer === inv.customerName && d.collectionDate === inv.collectionDate);
+    if (shouldRemove) linkedItems.push({ type: 'delivery', data: d });
+    return !shouldRemove;
   });
-  const delRemoved = delBefore - DB.deliveries.length;
 
-  renderAll();
-  saveData(true); // immediate — critical delete action
-  const summary = [`Invoice deleted`];
-  if (finRemoved > 0) summary.push(`${finRemoved} finance record${finRemoved>1?'s':''} removed`);
-  if (delRemoved > 0) summary.push(`${delRemoved} delivery entry removed`);
-  showToast(summary.join(' · ') + ' ✓');
-  if (currentAccountType === 'admin') logAdminActivity('Delete Invoice', `Deleted invoice for ${inv.customerName} — ${inv.total.toLocaleString()} FCFA`);
+  _sendToRecycleBin('invoice', inv, linkedItems);
+  renderAll(); // includes renderDepartments — departments now reflect deletion
+  saveData(true);
+  logActivity('Invoice → Bin', `Invoice for ${inv.customerName} — ${inv.total.toLocaleString()} FCFA (+ ${linkedItems.length} linked)`);
+  showToast(`Moved to Recycle Bin 🗑️ (+${linkedItems.length} linked records) — restore within 30 days`);
+  if (currentAccountType === 'admin') logAdminActivity('Delete Invoice', `→ Bin: ${inv.customerName} — ${inv.total.toLocaleString()} FCFA`);
 }
 
 function copyDetailInvoice() {
@@ -4144,20 +4240,346 @@ function switchPayTab(tab) {
   });
 }
 
+// ══════════════════════════════════════════════════════════════════
+// RECYCLE BIN — 30-day soft-delete for all record types
+// ══════════════════════════════════════════════════════════════════
+function _sendToRecycleBin(type, data, linkedItems) {
+  if (!Array.isArray(DB.recycleBin)) DB.recycleBin = [];
+  const now = new Date().toISOString();
+  const expiry = new Date(Date.now() + 30 * 86400000).toISOString();
+  const binId = 'bin_' + Date.now() + '_' + Math.random().toString(36).slice(2,5);
+  DB.recycleBin.unshift({
+    id: binId,
+    type,            // 'finance'|'invoice'|'delivery'|'expense'|'material'|'reminder'
+    data: JSON.parse(JSON.stringify(data)),
+    linkedItems: linkedItems || [],  // related records moved together (e.g. invoice's fin+delivery)
+    deletedBy: currentAccountUsername || '?',
+    deletedByType: currentAccountType || 'unknown',
+    deletedAt: now,
+    expiresAt: expiry
+  });
+  // Auto-purge items older than 30 days
+  const cutoff = new Date(Date.now() - 30 * 86400000).toISOString();
+  DB.recycleBin = DB.recycleBin.filter(b => b.expiresAt > cutoff);
+  return binId;
+}
+
+function _purgeExpiredBinItems() {
+  if (!Array.isArray(DB.recycleBin)) { DB.recycleBin = []; return; }
+  const cutoff = new Date(Date.now() - 30 * 86400000).toISOString();
+  const before = DB.recycleBin.length;
+  DB.recycleBin = DB.recycleBin.filter(b => b.expiresAt > cutoff);
+  return before - DB.recycleBin.length;
+}
+
+function restoreFromBin(binId) {
+  if (!Array.isArray(DB.recycleBin)) { showToast('Recycle bin is empty.', true); return; }
+  const item = DB.recycleBin.find(b => b.id === binId);
+  if (!item) { showToast('Item not found in bin.', true); return; }
+
+  let restored = 0;
+  const restoreRecord = (type, rec) => {
+    switch(type) {
+      case 'finance':
+        if (!DB.finance.find(r => r.id === rec.id)) {
+          DB.finance.unshift(rec);
+          // Remove from deletedSeedIds if applicable
+          if (rec.id && rec.id.startsWith('fin_seed_') && DB.deletedSeedIds) {
+            DB.deletedSeedIds = DB.deletedSeedIds.filter(id => id !== rec.id);
+          }
+          restored++;
+        }
+        break;
+      case 'invoice':
+        if (!DB.invoices.find(r => r.id === rec.id)) { DB.invoices.unshift(rec); restored++; }
+        break;
+      case 'delivery':
+        if (!DB.deliveries.find(r => r.id === rec.id)) { DB.deliveries.unshift(rec); restored++; }
+        break;
+      case 'expense':
+        if (!DB.expenses.find(r => r.id === rec.id)) { DB.expenses.unshift(rec); restored++; }
+        break;
+      case 'material':
+        if (!DB.materials.find(r => r.id === rec.id)) { DB.materials.unshift(rec); restored++; }
+        break;
+      case 'reminder':
+        if (!DB.reminders.find(r => r.id === rec.id)) { DB.reminders.unshift(rec); restored++; }
+        break;
+    }
+  };
+
+  // Restore the main item
+  restoreRecord(item.type, item.data);
+
+  // Restore linked items (e.g., invoice's finance + delivery records)
+  if (Array.isArray(item.linkedItems)) {
+    item.linkedItems.forEach(li => restoreRecord(li.type, li.data));
+  }
+
+  // Remove from bin
+  DB.recycleBin = DB.recycleBin.filter(b => b.id !== binId);
+
+  renderAll();
+  saveData(true);
+  logActivity('Restore from Bin', `Restored ${item.type} record for ${item.data.customer || item.data.customerName || item.data.item || item.data.id} (${restored} record${restored!==1?'s':''})`);
+  showToast(`✅ Restored ${restored} record${restored!==1?'s':''} — reflected across the app`);
+  renderRecycleBin();
+}
+
+function permanentDeleteBinItem(binId) {
+  if (!confirm('Permanently delete this item? This CANNOT be undone.')) return;
+  DB.recycleBin = DB.recycleBin.filter(b => b.id !== binId);
+  saveData(true);
+  logActivity('Permanent Delete', `Permanently deleted item from recycle bin`);
+  showToast('Permanently deleted ✓');
+  renderRecycleBin();
+}
+
+function emptyRecycleBin() {
+  if (!DB.recycleBin || DB.recycleBin.length === 0) { showToast('Recycle bin is already empty.', true); return; }
+  if (!confirm(`Permanently delete ALL ${DB.recycleBin.length} item(s) in the recycle bin? This CANNOT be undone.`)) return;
+  DB.recycleBin = [];
+  saveData(true);
+  logActivity('Empty Recycle Bin', 'All items permanently deleted from recycle bin');
+  showToast('Recycle bin emptied ✓');
+  renderRecycleBin();
+}
+
+function renderRecycleBin() {
+  const el = document.getElementById('recycle-bin-list');
+  if (!el) return;
+  _purgeExpiredBinItems();
+  const countEl = document.getElementById('recycle-bin-count');
+  if (countEl) countEl.textContent = DB.recycleBin.length ? `(${DB.recycleBin.length} item${DB.recycleBin.length!==1?'s':''})` : '(empty)';
+  if (!DB.recycleBin || DB.recycleBin.length === 0) {
+    el.innerHTML = '<div class="empty-state"><div class="icon">🗑️</div><div>Recycle bin is empty.</div></div>';
+    return;
+  }
+  el.innerHTML = DB.recycleBin.map(item => {
+    const deletedAt = new Date(item.deletedAt).toLocaleString('en-GB',{day:'2-digit',month:'short',hour:'2-digit',minute:'2-digit'});
+    const expiresAt = new Date(item.expiresAt).toLocaleDateString('en-GB',{day:'2-digit',month:'short',year:'numeric'});
+    const daysLeft = Math.max(0, Math.ceil((new Date(item.expiresAt) - Date.now()) / 86400000));
+    const name = item.data.customer || item.data.customerName || item.data.item || item.data.name || item.data.title || item.data.id || '—';
+    const typeIcon = {finance:'💰',invoice:'🧾',delivery:'📦',expense:'💸',material:'🧴',reminder:'🔔'}[item.type] || '📄';
+    const urgency = daysLeft <= 3 ? 'var(--danger)' : daysLeft <= 7 ? 'var(--accent)' : 'var(--muted)';
+    return `<div style="background:var(--surface2);border:1px solid var(--border);border-radius:10px;padding:1rem;margin-bottom:0.7rem;display:flex;align-items:flex-start;gap:0.8rem;flex-wrap:wrap;">
+      <div style="font-size:1.5rem;flex-shrink:0;">${typeIcon}</div>
+      <div style="flex:1;min-width:0;">
+        <div style="font-weight:600;font-size:0.9rem;">${escHtml(name)}</div>
+        <div style="font-size:0.72rem;color:var(--muted);font-family:'DM Mono',monospace;margin-top:0.2rem;">
+          ${item.type.toUpperCase()} · Deleted by <b style="color:var(--text);">${escHtml(item.deletedBy)}</b> (${item.deletedByType}) · ${deletedAt}
+          ${item.linkedItems && item.linkedItems.length ? ` · +${item.linkedItems.length} linked record${item.linkedItems.length!==1?'s':''}` : ''}
+        </div>
+        <div style="font-size:0.7rem;margin-top:0.3rem;color:${urgency};">⏳ ${daysLeft} day${daysLeft!==1?'s':''} left before permanent deletion (${expiresAt})</div>
+      </div>
+      <div style="display:flex;gap:0.4rem;flex-shrink:0;flex-wrap:wrap;">
+        <button class="btn btn-sm btn-success" onclick="restoreFromBin('${item.id}')">↩ Restore</button>
+        <button class="btn btn-sm btn-danger" onclick="permanentDeleteBinItem('${item.id}')">✕ Delete</button>
+      </div>
+    </div>`;
+  }).join('');
+}
+
+// ── Modified deleteFinRecord → moves to recycle bin ──────────────
 function deleteFinRecord(recId) {
   const rec = DB.finance.find(r => r.id === recId);
   if (!rec) { showToast('Record not found.', true); return; }
-  if (!confirm('Delete this record?')) return;
+  if (!confirm(`Move this record for "${rec.customer}" to the Recycle Bin?\n\nIt will be permanently deleted after 30 days unless restored.`)) return;
   DB.finance = DB.finance.filter(r => r.id !== recId);
-  // If this is a seed record, track its ID so re-seeding never brings it back
   if (recId && recId.startsWith('fin_seed_')) {
     if (!DB.deletedSeedIds) DB.deletedSeedIds = [];
     if (!DB.deletedSeedIds.includes(recId)) DB.deletedSeedIds.push(recId);
   }
+  _sendToRecycleBin('finance', rec);
   renderFinance();
+  renderDepartments(); // ensure departments update immediately
   saveData(true);
-  logActivity('Delete Finance Record', `Deleted: ${rec.customer} — ${rec.amount.toLocaleString()} FCFA (${rec.month})`);
-  if (currentAccountType === 'admin') logAdminActivity('Delete Finance Record', `${rec.customer} — ${rec.amount.toLocaleString()} FCFA (${rec.month})`);
+  logActivity('Delete Finance Record', `→ Bin: ${rec.customer} — ${rec.amount.toLocaleString()} FCFA (${rec.month})`);
+  showToast('Moved to Recycle Bin 🗑️ — restore within 30 days if needed');
+}
+
+// ══════════════════════════════════════════════════════════════════
+// IN-APP DOWNLOADS FOLDER — permanent log archive (super user only)
+// ══════════════════════════════════════════════════════════════════
+function _canAccessDownloads() {
+  if (currentAccountType === 'superuser') return true;
+  const delegated = DB.settings.downloadsAccessList || [];
+  return delegated.includes(currentAdminAccountId) || delegated.includes(currentAccountUsername);
+}
+
+function _saveLogToDownloadsFolder() {
+  if (!Array.isArray(DB.appDownloads)) DB.appDownloads = [];
+  const now = new Date();
+  const ts = now.toISOString();
+  const filename = 'WashnFold_Log_' + ts.slice(0,10) + '_' + String(now.getHours()).padStart(2,'0') + 'h' + String(now.getMinutes()).padStart(2,'0') + '.json';
+  const logData = {
+    _type: 'app_log_backup',
+    _appVersion: '9.0',
+    _savedAt: ts,
+    _savedBy: currentAccountUsername || 'system',
+    _savedByType: currentAccountType || 'unknown',
+    credentials: DB.credentials,
+    superUserCredentials: DB.superUserCredentials,
+    adminCredentials: DB.adminCredentials,
+    adminAccounts: DB.adminAccounts,
+    settings: DB.settings,
+    activityLog: DB.activityLog || [],
+    invoices: DB.invoices,
+    finance: DB.finance,
+    deliveries: DB.deliveries,
+    materials: DB.materials,
+    expenses: DB.expenses,
+    reminders: DB.reminders,
+    recycleBin: DB.recycleBin || [],
+    customerHistory: DB.customerHistory,
+    deletedSeedIds: DB.deletedSeedIds || []
+  };
+  const json = JSON.stringify(logData, null, 2);
+  const sizeKB = Math.round(json.length / 1024);
+  DB.appDownloads.unshift({
+    id: 'dl_' + Date.now(),
+    filename,
+    json,
+    savedAt: ts,
+    size: sizeKB + ' KB',
+    type: 'auto'
+  });
+  // Keep up to 90 entries in-app (3 months of daily logs)
+  if (DB.appDownloads.length > 90) DB.appDownloads = DB.appDownloads.slice(0, 90);
+  // Also trigger device download
+  try {
+    const blob = new Blob([json], { type: 'application/json' });
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    a.download = filename;
+    document.body.appendChild(a);
+    a.click();
+    setTimeout(() => { try { document.body.removeChild(a); URL.revokeObjectURL(a.href); } catch(e){} }, 3000);
+  } catch(e) {}
+}
+
+function manualSaveToDownloads() {
+  if (!_canAccessDownloads()) { showToast('Access denied.', true); return; }
+  const before = (DB.appDownloads || []).length;
+  _saveLogToDownloadsFolder();
+  const after = (DB.appDownloads || []).length;
+  saveData(true);
+  logActivity('Manual Log Save', 'Manually saved log to in-app Downloads folder');
+  showToast('Log saved to Downloads folder + device download started ✓');
+  renderDownloadsFolder();
+}
+
+function renderDownloadsFolder() {
+  const el = document.getElementById('downloads-folder-list');
+  if (!el) return;
+  if (!_canAccessDownloads()) {
+    el.innerHTML = '<div class="empty-state"><div class="icon">🔒</div><div>Access restricted. Super User only unless delegated.</div></div>';
+    return;
+  }
+  if (!DB.appDownloads || DB.appDownloads.length === 0) {
+    el.innerHTML = '<div class="empty-state"><div class="icon">📂</div><div>No logs saved yet. Logs are auto-saved on first logout of each day.</div></div>';
+    return;
+  }
+  el.innerHTML = DB.appDownloads.map(dl => {
+    const savedAt = new Date(dl.savedAt).toLocaleString('en-GB',{day:'2-digit',month:'short',year:'numeric',hour:'2-digit',minute:'2-digit'});
+    const typeLabel = dl.type === 'auto' ? '🤖 Auto' : '👤 Manual';
+    return `<div style="background:var(--surface2);border:1px solid var(--border);border-radius:10px;padding:0.85rem 1rem;margin-bottom:0.6rem;display:flex;align-items:center;gap:0.8rem;flex-wrap:wrap;">
+      <div style="flex:1;min-width:0;">
+        <div style="font-family:'DM Mono',monospace;font-size:0.82rem;font-weight:600;color:var(--accent);">${escHtml(dl.filename)}</div>
+        <div style="font-size:0.7rem;color:var(--muted);margin-top:0.2rem;">${typeLabel} · ${savedAt} · ${dl.size}</div>
+      </div>
+      <div style="display:flex;gap:0.4rem;flex-shrink:0;flex-wrap:wrap;">
+        <button class="btn btn-sm btn-secondary" onclick="downloadLogFile('${dl.id}')" title="Download to device">⬇ Download</button>
+        <button class="btn btn-sm" style="background:rgba(78,205,196,0.15);border:1px solid rgba(78,205,196,0.4);color:var(--accent2);" onclick="importLogFromDownloads('${dl.id}')" title="Import into app">↩ Import</button>
+        <button class="btn btn-sm btn-danger" onclick="deleteDownloadEntry('${dl.id}')" title="Delete this log">✕</button>
+      </div>
+    </div>`;
+  }).join('');
+}
+
+function downloadLogFile(dlId) {
+  if (!_canAccessDownloads()) { showToast('Access denied.', true); return; }
+  const dl = (DB.appDownloads || []).find(d => d.id === dlId);
+  if (!dl) { showToast('File not found.', true); return; }
+  const blob = new Blob([dl.json], { type: 'application/json' });
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = dl.filename;
+  document.body.appendChild(a);
+  a.click();
+  setTimeout(() => { try { document.body.removeChild(a); URL.revokeObjectURL(a.href); } catch(e){} }, 3000);
+  logActivity('Download Log', `Downloaded: ${dl.filename}`);
+  showToast(`Downloaded: ${dl.filename} ✓`);
+}
+
+function importLogFromDownloads(dlId) {
+  if (!_canAccessDownloads()) { showToast('Access denied.', true); return; }
+  const dl = (DB.appDownloads || []).find(d => d.id === dlId);
+  if (!dl) { showToast('File not found.', true); return; }
+  const warning = `⚠️ IMPORT WARNING\n\nImporting this backup will OVERWRITE current app data with the data from:\n\n"${dl.filename}"\nSaved: ${new Date(dl.savedAt).toLocaleString()}\n\nThis will replace all invoices, finance records, deliveries, expenses and more with the data from this backup.\n\nYour current data will be LOST unless you first save a fresh backup.\n\nDo you want to proceed?`;
+  if (!confirm(warning)) return;
+  if (!confirm('FINAL CONFIRMATION: Are you absolutely sure? This action cannot be undone.')) return;
+  try {
+    const loaded = JSON.parse(dl.json);
+    // Preserve current appDownloads — never overwrite the archive with imported data
+    const savedDownloads = JSON.parse(JSON.stringify(DB.appDownloads || []));
+    mergeLoadedData(loaded);
+    // Restore downloads archive regardless of what was in the import
+    DB.appDownloads = savedDownloads;
+    renderAll();
+    saveData(true);
+    logActivity('Import from Downloads', `Imported backup: ${dl.filename}`);
+    showToast('✅ Data imported successfully — app refreshed');
+    renderDownloadsFolder();
+  } catch(e) {
+    showToast('Import failed: ' + e.message, true);
+  }
+}
+
+function deleteDownloadEntry(dlId) {
+  if (!_canAccessDownloads()) { showToast('Access denied.', true); return; }
+  if (!confirm('Delete this log entry from the in-app folder? The file on your device (if downloaded) will remain.')) return;
+  DB.appDownloads = (DB.appDownloads || []).filter(d => d.id !== dlId);
+  saveData(true);
+  logActivity('Delete Download Entry', `Deleted log entry from downloads folder`);
+  showToast('Log entry deleted ✓');
+  renderDownloadsFolder();
+}
+
+function delegateDownloadsAccess() {
+  if (currentAccountType !== 'superuser') { showToast('Super User only.', true); return; }
+  renderDelegateList();
+}
+
+function renderDelegateList() {
+  const el = document.getElementById('delegate-access-list');
+  if (!el) return;
+  const list = DB.settings.downloadsAccessList || [];
+  if (!DB.adminAccounts || DB.adminAccounts.length === 0) {
+    el.innerHTML = '<p style="color:var(--muted);font-size:0.82rem;">No admin/staff accounts exist yet.</p>';
+    return;
+  }
+  el.innerHTML = DB.adminAccounts.map(acct => {
+    const hasAccess = list.includes(acct.id) || list.includes(acct.username);
+    const icon = hasAccess ? '✅' : '⬜';
+    return `<label style="display:flex;align-items:center;gap:0.6rem;font-size:0.85rem;cursor:pointer;padding:0.4rem 0;border-bottom:1px solid var(--border);">
+      <input type="checkbox" ${hasAccess ? 'checked' : ''} onchange="toggleDownloadDelegate('${acct.id}', this.checked)" style="cursor:pointer;">
+      ${icon} <b>${escHtml(acct.label)}</b> <span style="color:var(--muted);font-size:0.75rem;">(${escHtml(acct.username)})</span>
+    </label>`;
+  }).join('');
+}
+
+function toggleDownloadDelegate(acctId, grant) {
+  if (!DB.settings.downloadsAccessList) DB.settings.downloadsAccessList = [];
+  if (grant) {
+    if (!DB.settings.downloadsAccessList.includes(acctId)) DB.settings.downloadsAccessList.push(acctId);
+  } else {
+    DB.settings.downloadsAccessList = DB.settings.downloadsAccessList.filter(id => id !== acctId);
+  }
+  saveData();
+  logActivity('Delegate Downloads', `${grant ? 'Granted' : 'Revoked'} downloads access for account ${acctId}`);
+  renderDelegateList();
+  showToast(`Downloads access ${grant ? 'granted' : 'revoked'} ✓`);
 }
 
 function exportFinanceXLSX(exportAll = false) {
@@ -4558,12 +4980,15 @@ function renderMaterials() {
 }
 
 function deleteMaterial(i) {
-  if (!confirm('Delete?')) return;
   const mat = DB.materials[i];
+  if (!mat) return;
+  if (!confirm(`Move "${mat.name}" to Recycle Bin?`)) return;
   DB.materials.splice(i, 1);
+  _sendToRecycleBin('material', mat);
   renderMaterials();
   saveData(true);
-  logActivity('Delete Material', `Deleted material: ${mat ? mat.name : 'unknown'}`);
+  logActivity('Delete Material', `→ Bin: ${mat.name}`);
+  showToast('Moved to Recycle Bin 🗑️');
 }
 
 // ══════════════════════════════════════════════════════════════════
@@ -4620,10 +5045,14 @@ function doneReminder(idx) {
 }
 function deleteReminder(idx) {
   const rem = DB.reminders[idx];
+  if (!rem) return;
+  if (!confirm(`Move reminder "${rem.title}" to Recycle Bin?`)) return;
   DB.reminders.splice(idx, 1);
+  _sendToRecycleBin('reminder', rem);
   renderReminders();
   saveData(true);
-  logActivity('Delete Reminder', `Deleted reminder: "${rem ? rem.title : 'unknown'}"`);
+  logActivity('Delete Reminder', `→ Bin: "${rem.title}"`);
+  showToast('Moved to Recycle Bin 🗑️');
 }
 
 // ══════════════════════════════════════════════════════════════════
@@ -4658,12 +5087,16 @@ function renderExpenses() {
 }
 
 function deleteExpense(i) {
-  if (!confirm('Delete?')) return;
   const exp = DB.expenses[i];
+  if (!exp) return;
+  if (!confirm(`Move "${exp.item}" (${exp.amount.toLocaleString()} FCFA) to Recycle Bin?`)) return;
   DB.expenses.splice(i, 1);
+  _sendToRecycleBin('expense', exp);
   renderExpenses();
   saveData(true);
-  if (currentAccountType === 'admin') logAdminActivity('Delete Expense', `Deleted expense: ${exp ? exp.item + ' — ' + exp.amount.toLocaleString() + ' FCFA' : 'unknown'}`);
+  logActivity('Delete Expense', `→ Bin: ${exp.item} — ${exp.amount.toLocaleString()} FCFA`);
+  if (currentAccountType === 'admin') logAdminActivity('Delete Expense', `→ Bin: ${exp.item} — ${exp.amount.toLocaleString()} FCFA (${exp.category})`);
+  showToast('Moved to Recycle Bin 🗑️');
 }
 
 function exportExpensesPDF() {
@@ -5421,12 +5854,8 @@ function changePassword() {
   document.getElementById('set-old-pass').value = '';
   document.getElementById('set-new-pass').value = '';
   document.getElementById('set-conf-pass').value = '';
-  logActivity('Password Change', 'Manager password changed');
-  // Immediate synchronous save to prevent password revert
-  const saveObj = { ...DB, _appVersion: '7.0', _savedAt: new Date().toISOString() };
-  const jsonStr = JSON.stringify(saveObj);
-  try { localStorage.setItem('washnfold_db', jsonStr); } catch(e) {}
-  if (window._fbSetData) window._fbSetData(jsonStr);
+  logActivity('Password Change', `${currentAccountUsername} (${currentAccountType}) changed their password`);
+  saveData(true); // immediate cloud + local save
   showToast('Password changed successfully ✓');
 }
 
@@ -5444,10 +5873,7 @@ function changeSuperUserPassword() {
   document.getElementById('su-new-pass').value = '';
   document.getElementById('su-conf-pass').value = '';
   logActivity('Password Change', 'Super User password changed');
-  const saveObj = { ...DB, _appVersion: '7.0', _savedAt: new Date().toISOString() };
-  const jsonStr = JSON.stringify(saveObj);
-  try { localStorage.setItem('washnfold_db', jsonStr); } catch(e) {}
-  if (window._fbSetData) window._fbSetData(jsonStr);
+  saveData(true);
   showToast('Super User password changed ✓');
 }
 
@@ -5529,7 +5955,7 @@ function saveAccountModal() {
     logActivity('Create Account', `Created admin account: ${label} (${username})`);
   }
   closeModal('create-account-modal');
-  saveData();
+  saveData(true); // immediate — account changes must sync to cloud immediately
   renderSuAccountsList();
   loadAdminPermGrid();
   showToast(`Account ${editId ? 'updated' : 'created'} ✓`);
@@ -5538,40 +5964,70 @@ function saveAccountModal() {
 function renderSuAccountsList() {
   const el = document.getElementById('su-accounts-list');
   if (!el) return;
-  if (!DB.adminAccounts || DB.adminAccounts.length === 0) {
-    el.innerHTML = '<div class="empty-state"><div class="icon">👥</div><div>No admin accounts created yet.</div></div>';
-    return;
-  }
-  el.innerHTML = DB.adminAccounts.map(acct => {
-    const pages = Object.entries(acct.permissions||{}).filter(([,v])=>v).map(([k])=>k).join(', ') || 'none';
-    const susBadge = acct.suspended ? '<span class="badge badge-red" style="font-size:0.62rem;">SUSPENDED</span>' : '<span class="badge badge-green" style="font-size:0.62rem;">ACTIVE</span>';
-    return `<div style="background:var(--surface2);border:1px solid var(--border);border-radius:10px;padding:1rem;margin-bottom:0.8rem;">
-      <div style="display:flex;justify-content:space-between;align-items:flex-start;flex-wrap:wrap;gap:0.5rem;">
-        <div>
-          <div style="font-weight:600;font-size:0.95rem;">${escHtml(acct.label)}</div>
-          <div style="font-family:'DM Mono',monospace;font-size:0.72rem;color:var(--muted);">👤 ${escHtml(acct.username)} &nbsp;${susBadge}</div>
-          <div style="font-size:0.75rem;color:var(--muted);margin-top:0.3rem;">Pages: ${escHtml(pages)}</div>
-        </div>
-        <div style="display:flex;gap:0.4rem;flex-wrap:wrap;">
-          <button class="btn btn-sm btn-secondary" onclick="openCreateAccountModal('${acct.id}')">✏️ Edit</button>
-          <button class="btn btn-sm" style="background:rgba(116,185,255,0.15);border:1px solid rgba(116,185,255,0.4);color:var(--info);" onclick="suResetPassword('${acct.id}')">🔑 Reset Pass</button>
-          <button class="btn btn-sm" style="background:rgba(248,165,22,0.15);border:1px solid rgba(248,165,22,0.4);color:#f8a516;" onclick="suToggleSuspend('${acct.id}')">${acct.suspended ? '▶️ Unsuspend' : '⏸ Suspend'}</button>
-          <button class="btn btn-sm btn-danger" onclick="suDeleteAccount('${acct.id}')">🗑 Delete</button>
-        </div>
+
+  // ── Super User row (always at top) ──
+  let html = `<div style="background:rgba(232,197,71,0.07);border:1px solid rgba(232,197,71,0.4);border-radius:10px;padding:1rem;margin-bottom:0.7rem;">
+    <div style="display:flex;justify-content:space-between;align-items:flex-start;flex-wrap:wrap;gap:0.5rem;">
+      <div>
+        <div style="font-weight:700;font-size:0.95rem;">👑 ${escHtml(DB.superUserCredentials.username)} <span class="badge badge-yellow" style="font-size:0.6rem;margin-left:0.3rem;">Super User</span></div>
+        <div style="font-family:'DM Mono',monospace;font-size:0.7rem;color:var(--muted);margin-top:0.2rem;">Full system control · Registered root account</div>
       </div>
-    </div>`;
-  }).join('');
+      <span class="badge badge-green" style="font-size:0.62rem;">ACTIVE</span>
+    </div>
+  </div>`;
+
+  // ── Manager row ──
+  html += `<div style="background:rgba(116,185,255,0.07);border:1px solid rgba(116,185,255,0.35);border-radius:10px;padding:1rem;margin-bottom:0.7rem;">
+    <div style="display:flex;justify-content:space-between;align-items:flex-start;flex-wrap:wrap;gap:0.5rem;">
+      <div>
+        <div style="font-weight:600;font-size:0.95rem;">👑 ${escHtml(DB.credentials.username)} <span class="badge badge-blue" style="font-size:0.6rem;margin-left:0.3rem;">Manager</span></div>
+        <div style="font-family:'DM Mono',monospace;font-size:0.7rem;color:var(--muted);margin-top:0.2rem;">Laundry management access</div>
+      </div>
+      <div style="display:flex;gap:0.4rem;align-items:center;flex-wrap:wrap;">
+        <span class="badge badge-green" style="font-size:0.62rem;">ACTIVE</span>
+        <button class="btn btn-sm" style="background:rgba(116,185,255,0.15);border:1px solid rgba(116,185,255,0.4);color:var(--info);" onclick="suChangeManagerPassword()">🔑 Reset Pwd</button>
+      </div>
+    </div>
+  </div>`;
+
+  // ── Admin/Staff accounts ──
+  if (!DB.adminAccounts || DB.adminAccounts.length === 0) {
+    html += `<div style="color:var(--muted);font-size:0.82rem;padding:0.5rem 0;text-align:center;">No admin/staff accounts created yet. Use "➕ Create Account" above.</div>`;
+  } else {
+    html += DB.adminAccounts.map(acct => {
+      const pages = Object.entries(acct.permissions||{}).filter(([,v])=>v).map(([k])=>k).join(', ') || 'none';
+      const susBadge = acct.suspended
+        ? '<span class="badge badge-red" style="font-size:0.62rem;">SUSPENDED</span>'
+        : '<span class="badge badge-green" style="font-size:0.62rem;">ACTIVE</span>';
+      return `<div style="background:var(--surface2);border:1px solid var(--border);border-radius:10px;padding:1rem;margin-bottom:0.7rem;">
+        <div style="display:flex;justify-content:space-between;align-items:flex-start;flex-wrap:wrap;gap:0.5rem;">
+          <div>
+            <div style="font-weight:600;font-size:0.95rem;">🔧 ${escHtml(acct.label)} <span class="admin-badge" style="font-size:0.6rem;margin-left:0.3rem;">Admin/Staff</span></div>
+            <div style="font-family:'DM Mono',monospace;font-size:0.72rem;color:var(--muted);margin-top:0.15rem;">@${escHtml(acct.username)} &nbsp;${susBadge}</div>
+            <div style="font-size:0.72rem;color:var(--muted);margin-top:0.25rem;">Pages: ${escHtml(pages)}</div>
+          </div>
+          <div style="display:flex;gap:0.35rem;flex-wrap:wrap;">
+            <button class="btn btn-sm btn-secondary" onclick="openCreateAccountModal('${acct.id}')">✏️ Edit</button>
+            <button class="btn btn-sm" style="background:rgba(116,185,255,0.15);border:1px solid rgba(116,185,255,0.4);color:var(--info);" onclick="suResetPassword('${acct.id}')">🔑 Pwd</button>
+            <button class="btn btn-sm" style="background:rgba(248,165,22,0.15);border:1px solid rgba(248,165,22,0.4);color:#f8a516;" onclick="suToggleSuspend('${acct.id}')">${acct.suspended ? '▶️ Activate' : '⏸ Suspend'}</button>
+            <button class="btn btn-sm btn-danger" onclick="suDeleteAccount('${acct.id}')">✕ Delete</button>
+          </div>
+        </div>
+      </div>`;
+    }).join('');
+  }
+  el.innerHTML = html;
 }
 
 function suResetPassword(id) {
   const acct = DB.adminAccounts.find(a=>a.id===id);
   if (!acct) return;
-  const newPass = prompt(`Reset password for "${acct.label}" (${acct.username}).\nEnter new password (min 4 chars):`);
+  const newPass = prompt(`Reset password for "${acct.label}" (@${acct.username}).\nEnter new password (min 4 chars):`);
   if (newPass === null) return;
   if (newPass.length < 4) { showToast('Password must be at least 4 characters.', true); return; }
   acct.password = newPass;
-  logActivity('Reset Password', `Reset password for account: ${acct.label} (${acct.username})`);
-  saveData();
+  logActivity('Reset Password', `Super User reset password for: ${acct.label} (@${acct.username})`);
+  saveData(true);
   showToast(`Password reset for ${acct.label} ✓`);
 }
 
@@ -5580,11 +6036,8 @@ function suChangeManagerPassword() {
   if (newPass === null) return;
   if (newPass.length < 6) { showToast('Password must be at least 6 characters.', true); return; }
   DB.credentials.password = newPass;
-  logActivity('Password Change', 'Super User changed Manager password');
-  const saveObj = { ...DB, _appVersion: '7.0', _savedAt: new Date().toISOString() };
-  const jsonStr = JSON.stringify(saveObj);
-  try { localStorage.setItem('washnfold_db', jsonStr); } catch(e) {}
-  if (window._fbSetData) window._fbSetData(jsonStr);
+  logActivity('Password Change', `Super User changed Manager (${DB.credentials.username}) password`);
+  saveData(true);
   showToast('Manager password changed ✓');
 }
 
@@ -5592,19 +6045,24 @@ function suToggleSuspend(id) {
   const acct = DB.adminAccounts.find(a=>a.id===id);
   if (!acct) return;
   acct.suspended = !acct.suspended;
-  logActivity(acct.suspended ? 'Suspend Account' : 'Unsuspend Account', `Account: ${acct.label} (${acct.username})`);
-  saveData();
+  logActivity(acct.suspended ? 'Suspend Account' : 'Unsuspend Account',
+    `${currentAccountUsername} ${acct.suspended ? 'suspended' : 'reactivated'} account: ${acct.label} (@${acct.username})`);
+  saveData(true);
   renderSuAccountsList();
-  showToast(`Account ${acct.suspended ? 'suspended' : 'unsuspended'} ✓`);
+  showToast(`Account ${acct.suspended ? 'suspended' : 'reactivated'} ✓`);
 }
 
 function suDeleteAccount(id) {
   const acct = DB.adminAccounts.find(a=>a.id===id);
   if (!acct) return;
-  if (!confirm(`Delete account "${acct.label}" (${acct.username})? This cannot be undone.`)) return;
+  if (!confirm(`Delete account "${acct.label}" (@${acct.username})?\n\nThis will permanently remove this account. They will no longer be able to log in.`)) return;
   DB.adminAccounts = DB.adminAccounts.filter(a=>a.id!==id);
-  logActivity('Delete Account', `Deleted admin account: ${acct.label} (${acct.username})`);
-  saveData();
+  // Also remove from downloads access list if present
+  if (DB.settings.downloadsAccessList) {
+    DB.settings.downloadsAccessList = DB.settings.downloadsAccessList.filter(i => i !== id);
+  }
+  logActivity('Delete Account', `${currentAccountUsername} deleted admin account: ${acct.label} (@${acct.username})`);
+  saveData(true);
   renderSuAccountsList();
   showToast('Account deleted ✓');
 }
@@ -5675,13 +6133,8 @@ function renderSuAuditLog() {
   if (!el) return;
   const search = (document.getElementById('su-audit-search')?.value || '').toLowerCase();
   const acctFilter = document.getElementById('su-audit-account')?.value || '';
-  // Also merge legacy adminActivityLog
+  // Use unified activityLog only — legacy adminActivityLog was causing incorrect username display
   let combined = [...(DB.activityLog || [])];
-  (DB.adminActivityLog || []).forEach(old => {
-    if (!combined.find(x=>x.id===old.id)) {
-      combined.push({ ...old, accountType: 'admin', username: DB.adminCredentials.username || 'admin' });
-    }
-  });
   combined.sort((a,b)=> new Date(b.timestamp)-new Date(a.timestamp));
   let filtered = combined.filter(entry => {
     if (acctFilter && entry.accountType !== acctFilter) return false;
@@ -5696,12 +6149,17 @@ function renderSuAuditLog() {
     el.innerHTML = '<div class="empty-state"><div class="icon">📋</div><div>No activity recorded yet.</div></div>';
     return;
   }
-  el.innerHTML = filtered.slice(0,300).map(entry => {
+  el.innerHTML = filtered.slice(0,500).map(entry => {
     const ts = new Date(entry.timestamp).toLocaleString('en-GB',{day:'2-digit',month:'short',hour:'2-digit',minute:'2-digit'});
-    const typeBadge = entry.accountType === 'superuser' ? `<span class="badge badge-yellow" style="font-size:0.58rem;">👑 Super</span>`
-      : entry.accountType === 'manager' ? `<span class="badge badge-blue" style="font-size:0.58rem;">👑 Mgr</span>`
-      : `<span class="badge badge-green" style="font-size:0.58rem;">🔧 Admin</span>`;
-    return `<div class="activity-item"><div><b>${escHtml(entry.action||'')}</b> — ${escHtml(entry.detail||'')} ${typeBadge} <span style="font-size:0.68rem;color:var(--muted);">(${escHtml(entry.username||'')})</span></div><div class="act-time">${ts}</div></div>`;
+    const typeBadge = entry.accountType === 'superuser'
+      ? `<span class="badge badge-yellow" style="font-size:0.58rem;">👑 Super</span>`
+      : entry.accountType === 'manager'
+      ? `<span class="badge badge-blue" style="font-size:0.58rem;">👑 Manager</span>`
+      : `<span class="badge badge-green" style="font-size:0.58rem;">🔧 ${escHtml(entry.accountType||'user')}</span>`;
+    return `<div class="activity-item">
+      <div><b>${escHtml(entry.action||'')}</b> — ${escHtml(entry.detail||'')} ${typeBadge} <span style="font-size:0.68rem;color:var(--accent);font-family:'DM Mono',monospace;">${escHtml(entry.username||'?')}</span></div>
+      <div class="act-time">${ts}</div>
+    </div>`;
   }).join('');
 }
 
@@ -6228,7 +6686,7 @@ function saveData(immediate) {
 
 async function _doCloudSave() {
   try {
-    const saveObj = { ...DB, _appVersion: '7.0', _savedAt: new Date().toISOString() };
+    const saveObj = { ...DB, _appVersion: '9.0', _savedAt: new Date().toISOString() };
     const jsonStr = JSON.stringify(saveObj);
     // localStorage is always written first (instant, never fails)
     localStorage.setItem('washnfold_db', jsonStr);
@@ -6236,13 +6694,15 @@ async function _doCloudSave() {
     if (window._fbSetData && !window._firebaseBlocked) {
       window._fbSetData(jsonStr);
     }
-    // Update save indicator
+    // Update save indicator — show it regardless of mobile CSS (use inline style)
     const ind = document.getElementById('autosave-indicator');
     if (ind) {
-      ind.textContent = window._firebaseBlocked ? '💾 Saved locally' : '✓ Saved';
+      ind.textContent = window._firebaseBlocked ? '💾 Saved' : '✓ Saved';
       ind.style.color = window._firebaseBlocked ? 'var(--accent)' : 'var(--success)';
+      ind.style.display = 'inline';
       ind.style.opacity = '1';
-      setTimeout(() => { ind.style.opacity = '0'; }, 2500);
+      clearTimeout(ind._hideTimer);
+      ind._hideTimer = setTimeout(() => { ind.style.opacity = '0'; setTimeout(() => { ind.style.display = ''; }, 400); }, 2200);
     }
     const lsd = document.getElementById('last-saved-display');
     if (lsd) lsd.textContent = new Date().toLocaleTimeString();
@@ -7929,7 +8389,7 @@ document.addEventListener('DOMContentLoaded', () => {
       // Save data synchronously before the page closes/refreshes
       // This is the critical guard against data loss on refresh
       try {
-        const saveObj = Object.assign({}, window.DB || {}, { _appVersion: '7.0', _savedAt: new Date().toISOString() });
+        const saveObj = Object.assign({}, window.DB || {}, { _appVersion: '9.0', _savedAt: new Date().toISOString() });
         localStorage.setItem('washnfold_db', JSON.stringify(saveObj));
       } catch(_) {}
       _removeLocalPresence();
