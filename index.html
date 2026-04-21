@@ -1614,6 +1614,45 @@ body.mobile-view .card-title-row { flex-direction: column; align-items: flex-sta
       <p style="font-size:0.75rem;color:var(--muted);margin-top:0.8rem;">⚠️ Clearing all data is restricted to the Super User account only.</p>
     </div>
   </div>
+
+  <!-- ════ RECYCLE BIN PAGE (inside #app) ════ -->
+  <div class="page" id="page-recycle">
+    <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:0.8rem;margin-bottom:1.2rem;">
+      <h2 class="section-title" style="margin-bottom:0;">🗑️ Recycle Bin <span id="recycle-bin-count" style="font-size:0.75rem;color:var(--muted);font-family:'DM Mono',monospace;"></span></h2>
+      <button class="btn btn-danger btn-sm" onclick="emptyRecycleBin()">🗑 Empty Bin</button>
+    </div>
+    <div class="card" style="margin-bottom:1rem;background:rgba(255,107,107,0.05);border-color:rgba(255,107,107,0.25);">
+      <div style="font-size:0.82rem;color:var(--muted);line-height:1.6;">
+        ♻️ Deleted records are kept here for <b style="color:var(--text);">30 days</b> before being permanently removed. Click <b style="color:var(--success);">↩ Restore</b> to bring any item back — it will immediately reappear across the entire app (invoices, departments, deliveries, etc).
+      </div>
+    </div>
+    <div id="recycle-bin-list"></div>
+  </div>
+
+  <!-- ════ DOWNLOADS FOLDER PAGE (inside #app) ════ -->
+  <div class="page" id="page-downloads">
+    <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:0.8rem;margin-bottom:1.2rem;">
+      <div>
+        <h2 class="section-title" style="margin-bottom:0.2rem;">📂 In-App Downloads Folder</h2>
+        <span id="downloads-header-count" style="font-size:0.75rem;color:var(--accent2);font-family:'DM Mono',monospace;"></span>
+      </div>
+      <button class="btn btn-primary btn-sm" onclick="manualSaveToDownloads()">💾 Save Log Now</button>
+    </div>
+    <div class="card" style="margin-bottom:1rem;background:rgba(78,205,196,0.05);border-color:rgba(78,205,196,0.25);">
+      <div style="font-size:0.82rem;color:var(--muted);line-height:1.7;">
+        🔒 <b style="color:var(--text);">Super User only</b> (unless delegated). Auto-saves a complete JSON backup on your <b style="color:var(--text);">first logout of each day</b>. These logs are <b style="color:var(--accent);">permanent</b> — never auto-deleted. Up to 90 days stored.<br>
+        <b style="color:var(--success);">⬇ Download</b> to device · <b style="color:var(--accent2);">↩ Import</b> to restore · <b style="color:var(--danger);">✕</b> to delete entry.
+      </div>
+    </div>
+    <div id="downloads-folder-list"></div>
+    <div class="card" style="margin-top:1.2rem;" id="delegate-access-card">
+      <div class="card-title">🔑 Delegate Downloads Access</div>
+      <p style="font-size:0.82rem;color:var(--muted);margin-bottom:0.8rem;">Grant admin/staff accounts access to this folder. Super User always has access.</p>
+      <div id="delegate-access-list"></div>
+      <button class="btn btn-secondary btn-sm" style="margin-top:0.8rem;" onclick="saveData();showToast('Access settings saved ✓');">💾 Save Settings</button>
+    </div>
+  </div>
+
 </div>
 
 <!-- ══ SUPER USER PAGE ══ -->
@@ -1936,48 +1975,6 @@ body.mobile-view .card-title-row { flex-direction: column; align-items: flex-sta
       </div>
     </div>
   </div>
-<!-- ════════════════════════════════════════════════════
-     RECYCLE BIN PAGE
-════════════════════════════════════════════════════ -->
-<div class="page" id="page-recycle">
-  <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:0.8rem;margin-bottom:1.2rem;">
-    <h2 class="section-title" style="margin-bottom:0;">🗑️ Recycle Bin <span id="recycle-bin-count" style="font-size:0.75rem;color:var(--muted);font-family:'DM Mono',monospace;"></span></h2>
-    <button class="btn btn-danger btn-sm" onclick="emptyRecycleBin()">🗑 Empty Bin</button>
-  </div>
-  <div class="card" style="margin-bottom:1rem;background:rgba(255,107,107,0.05);border-color:rgba(255,107,107,0.25);">
-    <div style="font-size:0.82rem;color:var(--muted);line-height:1.6;">
-      ♻️ Deleted records are kept here for <b style="color:var(--text);">30 days</b> before being permanently removed. Click <b style="color:var(--success);">↩ Restore</b> to bring any item back — it will immediately reappear in its original location across the entire app (invoices, departments, deliveries, etc). Records restored from bin automatically re-synchronise everywhere.
-    </div>
-  </div>
-  <div id="recycle-bin-list"></div>
-</div>
-
-<!-- ════════════════════════════════════════════════════
-     DOWNLOADS FOLDER PAGE
-════════════════════════════════════════════════════ -->
-<div class="page" id="page-downloads">
-  <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:0.8rem;margin-bottom:1.2rem;">
-    <div>
-      <h2 class="section-title" style="margin-bottom:0.2rem;">📂 In-App Downloads Folder</h2>
-      <span id="downloads-header-count" style="font-size:0.75rem;color:var(--accent2);font-family:'DM Mono',monospace;"></span>
-    </div>
-    <button class="btn btn-primary btn-sm" onclick="manualSaveToDownloads()">💾 Save Log Now</button>
-  </div>
-  <div class="card" style="margin-bottom:1rem;background:rgba(78,205,196,0.05);border-color:rgba(78,205,196,0.25);">
-    <div style="font-size:0.82rem;color:var(--muted);line-height:1.7;">
-      🔒 <b style="color:var(--text);">Super User only</b> (unless delegated). This folder automatically receives a complete JSON log backup on the <b style="color:var(--text);">first logout of each day</b>. These logs are <b style="color:var(--accent);">permanent</b> — they are never deleted automatically even if data is lost elsewhere. Up to 90 days of logs are stored here.<br>
-      Use <b style="color:var(--success);">⬇ Download</b> to save to your device · <b style="color:var(--accent2);">↩ Import</b> to restore app data from a log · <b style="color:var(--danger);">✕</b> to remove a log entry.
-    </div>
-  </div>
-  <div id="downloads-folder-list"></div>
-  <div class="card" style="margin-top:1.2rem;" id="delegate-access-card">
-    <div class="card-title">🔑 Delegate Downloads Access</div>
-    <p style="font-size:0.82rem;color:var(--muted);margin-bottom:0.8rem;">Grant specific admin/staff accounts access to this folder. Super User always has access regardless.</p>
-    <div id="delegate-access-list"></div>
-    <button class="btn btn-secondary btn-sm" style="margin-top:0.8rem;" onclick="saveData();showToast('Access settings saved ✓');">💾 Save Settings</button>
-  </div>
-</div>
-
 <div class="toast" id="toast"></div>
 
 <script>
