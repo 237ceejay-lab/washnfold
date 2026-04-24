@@ -964,6 +964,20 @@ body.mobile-view .card-title-row { flex-direction: column; align-items: flex-sta
       </div>
     </div>
 
+    <!-- Error display box -->
+    <div id="ai-error-box" style="display:none;" class="card">
+      <div style="background:rgba(255,107,107,0.08);border:1px solid rgba(255,107,107,0.35);border-radius:10px;padding:1rem;">
+        <div style="color:var(--danger);font-weight:600;margin-bottom:0.5rem;">❌ Parsing Failed</div>
+        <div id="ai-error-msg" style="font-size:0.85rem;color:var(--text);margin-bottom:0.8rem;line-height:1.6;"></div>
+        <div style="font-size:0.78rem;color:var(--muted);line-height:1.6;">
+          <b>Troubleshooting:</b><br>
+          • Make sure your API key is saved correctly (starts with <span style="font-family:'DM Mono',monospace;color:var(--accent);">sk-ant-</span>)<br>
+          • Make sure you have an active internet connection<br>
+          • Try refreshing the page if the problem persists
+        </div>
+      </div>
+    </div>
+
     <div id="ai-parse-result" style="display:none;">
       <div class="card" style="background:rgba(81,207,102,0.05);border-color:rgba(81,207,102,0.3);">
         <div class="card-title" style="color:var(--success);">▸ Step 2 — Review &amp; Confirm Parsed Invoice</div>
@@ -2730,74 +2744,55 @@ function confirmLogout(isAuto) {
   if (btn) { btn.textContent = '⏳ Saving...'; btn.disabled = true; }
 
   // ── Step 1: Synchronous localStorage save (instant, never fails) ──
-  const saveObj = {
-    ...DB,
-    _appVersion: '12.0',
-    _savedAt: new Date().toISOString(),
-    deletedSeedIds: DB.deletedSeedIds || [],
-    settings: { ...DB.settings },
-    recycleBin: DB.recycleBin || []
-  };
-  const jsonStr = JSON.stringify(saveObj);
-  try { localStorage.setItem('washnfold_db', jsonStr); } catch(e) {}
+  try {
+    const saveObj = {
+      ...DB,
+      _appVersion: '12.0',
+      _savedAt: new Date().toISOString(),
+      deletedSeedIds: DB.deletedSeedIds || [],
+      settings: { ...DB.settings },
+      recycleBin: DB.recycleBin || []
+    };
+    const jsonStr = JSON.stringify(saveObj);
+    localStorage.setItem('washnfold_db', jsonStr);
 
-  // ── Step 2: Scheduled logout: save log to in-app Downloads folder ──
-  // Respects inAppDownloadIntervalHours and autoDownloadAccounts settings.
-  const _inAppAccts = DB.settings.autoDownloadAccounts || ['superuser','manager','admin'];
-  const _inAppAllowed = _inAppAccts.includes(currentAccountType);
-  if (_inAppAllowed) {
-    const _inAppIntervalHours = (typeof DB.settings.inAppDownloadIntervalHours === 'number' && DB.settings.inAppDownloadIntervalHours >= 1)
-      ? DB.settings.inAppDownloadIntervalHours : 24;
-    const _lastSave = DB.settings.lastDailyLogDate ? new Date(DB.settings.lastDailyLogDate) : null;
-    // For intervals ≥ 24h we compare calendar dates; for sub-day intervals we compare timestamps
-    let _shouldSave = false;
-    if (_inAppIntervalHours < 24) {
-      // Sub-day: use actual elapsed hours
-      const _elapsed = _lastSave ? (Date.now() - _lastSave.getTime()) / 3600000 : Infinity;
-      _shouldSave = _elapsed >= _inAppIntervalHours;
-    } else {
-      // Daily+: compare date strings (first logout of each qualifying day)
-      const _intervalDays = Math.floor(_inAppIntervalHours / 24);
-      if (!_lastSave) {
-        _shouldSave = true;
-      } else {
-        const _daysSince = (Date.now() - _lastSave.getTime()) / 86400000;
-        _shouldSave = _daysSince >= _intervalDays;
+    // ── Step 2: In-app log save (best-effort, must never block logout) ──
+    try {
+      const _inAppAccts   = DB.settings.autoDownloadAccounts || ['superuser','manager','admin'];
+      const _inAppAllowed = _inAppAccts.includes(currentAccountType);
+      if (_inAppAllowed) {
+        const _inAppIntervalHours = (typeof DB.settings.inAppDownloadIntervalHours === 'number' && DB.settings.inAppDownloadIntervalHours >= 1)
+          ? DB.settings.inAppDownloadIntervalHours : 24;
+        const _lastSave  = DB.settings.lastDailyLogDate ? new Date(DB.settings.lastDailyLogDate) : null;
+        let _shouldSave  = false;
+        if (_inAppIntervalHours < 24) {
+          _shouldSave = !_lastSave || (Date.now() - _lastSave.getTime()) / 3600000 >= _inAppIntervalHours;
+        } else {
+          _shouldSave = !_lastSave || (Date.now() - _lastSave.getTime()) / 86400000 >= Math.floor(_inAppIntervalHours / 24);
+        }
+        if (_shouldSave) {
+          DB.settings.lastDailyLogDate = new Date().toISOString();
+          _saveLogToDownloadsFolder();
+          localStorage.setItem('washnfold_db', JSON.stringify({
+            ...DB, _appVersion: '12.0', _savedAt: new Date().toISOString(),
+            deletedSeedIds: DB.deletedSeedIds || [],
+            settings: { ...DB.settings }, recycleBin: DB.recycleBin || []
+          }));
+        }
       }
-    }
-    if (_shouldSave) {
-      DB.settings.lastDailyLogDate = new Date().toISOString();
-      _saveLogToDownloadsFolder();
-      // Re-save with updated lastDailyLogDate
-      try {
-        localStorage.setItem('washnfold_db', JSON.stringify({
-          ...DB, _appVersion: '12.0', _savedAt: new Date().toISOString(),
-          deletedSeedIds: DB.deletedSeedIds || [],
-          settings:       { ...DB.settings },
-          recycleBin:     DB.recycleBin     || []
-        }));
-      } catch(e) {}
-    }
-  }
+    } catch(_e) { /* log save failed — logout still proceeds */ }
 
-  // ── Step 3: Fire Firebase save in background (don't wait — 800ms timeout) ──
-  let _fbDone = false;
-  const _proceedLogout = () => {
-    if (_fbDone) return;
-    _fbDone = true;
-    showToast('Data saved — logging out ✓');
-    if (!isEmailJSConfigured()) maybeSendFallbackLog();
-    setTimeout(doLogout, 600);
-  };
+    // ── Step 3: Fire Firebase save in background — logout does NOT wait ──
+    if (window._fbSetData && !window._firebaseBlocked) {
+      try { window._fbSetData(jsonStr); } catch(_e) {}
+    }
 
-  if (window._fbSetData && !window._firebaseBlocked) {
-    // Give Firebase max 2.5 seconds; if it takes longer, logout anyway (data is in localStorage)
-    const _fbTimeout = setTimeout(_proceedLogout, 2500);
-    window._fbSetData(jsonStr).then(() => { clearTimeout(_fbTimeout); _proceedLogout(); }).catch(() => { clearTimeout(_fbTimeout); _proceedLogout(); });
-  } else {
-    // No Firebase — logout immediately after short UI feedback delay
-    setTimeout(_proceedLogout, 400);
-  }
+  } catch(_e) { /* even if everything above fails, we still logout */ }
+
+  // ── Step 4: Always proceed to doLogout after a short delay ──
+  // The delay just lets the "Saving..." button state show briefly.
+  showToast('Logging out ✓');
+  setTimeout(doLogout, 500);
 }
 
 // ── EmailJS helpers ─────────────────────────────────────────────────
@@ -9265,75 +9260,98 @@ async function aiParseInvoice() {
     return;
   }
 
-  const btn = document.getElementById('ai-parse-btn');
-  const indicator = document.getElementById('ai-parsing-indicator');
-  const resultEl  = document.getElementById('ai-parse-result');
-  const successEl = document.getElementById('ai-import-success');
+  const btn        = document.getElementById('ai-parse-btn');
+  const indicator  = document.getElementById('ai-parsing-indicator');
+  const resultEl   = document.getElementById('ai-parse-result');
+  const successEl  = document.getElementById('ai-import-success');
+  const errorBox   = document.getElementById('ai-error-box');
 
   if (btn) { btn.disabled = true; btn.textContent = '⏳ Parsing...'; }
   if (indicator) indicator.style.display = '';
   if (resultEl)  resultEl.style.display  = 'none';
   if (successEl) successEl.style.display = 'none';
+  if (errorBox)  errorBox.style.display  = 'none';
 
-  const nowDate = new Date();
-  const monthNames = ['January','February','March','April','May','June','July','August','September','October','November','December'];
+  const nowDate      = new Date();
+  const monthNames   = ['January','February','March','April','May','June','July','August','September','October','November','December'];
   const currentMonth = monthNames[nowDate.getMonth()];
-  const todayISO = nowDate.toISOString().split('T')[0];
+  const todayISO     = nowDate.toISOString().split('T')[0];
 
-  const systemPrompt = `You are a data extraction assistant for Washn' Fold, a laundry business in Cameroon. Currency is FCFA.
-Service types: wash_only = washing only, wash_iron = washing and ironing, mixed = both types present.
-Return ONLY a valid JSON object — no markdown fences, no explanation, no extra text. Exactly this structure:
-{"customerName":"string","invoiceDate":"YYYY-MM-DD or empty","collectionDate":"YYYY-MM-DD or empty","paymentMonth":"English month name","serviceType":"wash_only|wash_iron|mixed","total":0,"items":[{"label":"string","qty":0,"service":"wash_only|wash_iron","unitPrice":0,"subtotal":0}],"notes":"string"}
-Rules: If date not given leave empty. Use explicit total if stated, else sum items. Today: ${todayISO}. Current month: ${currentMonth}.`;
+  const systemPrompt = 'You are a data extraction assistant for Washn\' Fold, a laundry business in Cameroon. Currency is FCFA.\nService types: wash_only = washing only, wash_iron = washing and ironing, mixed = both types present.\nReturn ONLY a valid JSON object — no markdown fences, no explanation, no extra text. Exactly this structure:\n{"customerName":"string","invoiceDate":"YYYY-MM-DD or empty","collectionDate":"YYYY-MM-DD or empty","paymentMonth":"English month name","serviceType":"wash_only|wash_iron|mixed","total":0,"items":[{"label":"string","qty":0,"service":"wash_only|wash_iron","unitPrice":0,"subtotal":0}],"notes":"string"}\nRules: If date not given leave empty string. Use explicit total if stated, else sum items. Today: ' + todayISO + '. Current month: ' + currentMonth + '.';
 
-  try {
-    const response = await fetch('https://api.anthropic.com/v1/messages', {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'x-api-key': apiKey,
-        'anthropic-version': '2023-06-01',
-        'anthropic-dangerous-direct-browser-access': 'true'
-      },
-      body: JSON.stringify({
-        model: 'claude-haiku-4-5-20251001',
-        max_tokens: 1024,
-        system: systemPrompt,
-        messages: [{ role: 'user', content: 'Parse this invoice text:\n\n' + text }]
-      })
-    });
+  const requestBody = JSON.stringify({
+    model: 'claude-haiku-4-5-20251001',
+    max_tokens: 1024,
+    system: systemPrompt,
+    messages: [{ role: 'user', content: 'Parse this invoice text:\n\n' + text }]
+  });
 
-    if (!response.ok) {
-      let errMsg = 'HTTP ' + response.status;
+  function _onDone(responseText, httpStatus) {
+    if (indicator) indicator.style.display = 'none';
+    if (btn) { btn.disabled = false; btn.textContent = '🤖 Parse Invoice with AI'; }
+
+    if (httpStatus !== 200) {
+      let errMsg = 'Server returned status ' + httpStatus;
       try {
-        const errData = await response.json();
+        const errData = JSON.parse(responseText);
         errMsg = errData.error?.message || errMsg;
       } catch(_) {}
-      throw new Error(errMsg);
+      if (httpStatus === 401) errMsg = 'Invalid API key — please check it in the setup section above.';
+      else if (httpStatus === 403) errMsg = 'API key does not have permission. Make sure it is an active key.';
+      else if (httpStatus === 529 || httpStatus === 503) errMsg = 'Anthropic servers are overloaded. Please try again in a moment.';
+      _showAiError(errMsg, httpStatus);
+      return;
     }
 
-    const data = await response.json();
-    const rawText = (data.content || []).filter(b => b.type === 'text').map(b => b.text).join('').trim();
+    try {
+      const data    = JSON.parse(responseText);
+      const raw     = (data.content || []).filter(b => b.type === 'text').map(b => b.text).join('').trim();
+      const clean   = raw.replace(/^```json[\r\n]*/,'').replace(/^```[\r\n]*/,'').replace(/[\r\n]*```$/,'').trim();
+      const parsed  = JSON.parse(clean);
+      _aiParsedData = parsed;
+      _aiPopulateForm(parsed);
+      if (resultEl) resultEl.style.display = '';
+    } catch(e) {
+      _showAiError('AI returned unexpected data. Raw response: ' + responseText.slice(0, 300), 0);
+    }
+  }
 
-    // Strip any accidental markdown fences
-    const clean = rawText.replace(/^```json\s*/,'').replace(/^```\s*/,'').replace(/\s*```$/,'').trim();
-    const parsed = JSON.parse(clean);
-
-    _aiParsedData = parsed;
-    _aiPopulateForm(parsed);
-
+  function _onNetworkError(e) {
     if (indicator) indicator.style.display = 'none';
-    if (resultEl)  resultEl.style.display  = '';
     if (btn) { btn.disabled = false; btn.textContent = '🤖 Parse Invoice with AI'; }
+    _showAiError('Network error — could not reach Anthropic servers. Check your internet connection and try again.', -1);
+  }
 
-  } catch (err) {
+  function _showAiError(msg, code) {
+    const box = document.getElementById('ai-error-box');
+    const msgEl = document.getElementById('ai-error-msg');
+    if (msgEl) msgEl.textContent = msg;
+    if (box) box.style.display = '';
+    showToast('❌ ' + msg, true);
+  }
+
+  // Use XMLHttpRequest — works from file:// and https:// alike
+  try {
+    const xhr = new XMLHttpRequest();
+    xhr.open('POST', 'https://api.anthropic.com/v1/messages', true);
+    xhr.setRequestHeader('Content-Type', 'application/json');
+    xhr.setRequestHeader('x-api-key', apiKey);
+    xhr.setRequestHeader('anthropic-version', '2023-06-01');
+    xhr.setRequestHeader('anthropic-dangerous-direct-browser-access', 'true');
+    xhr.timeout = 30000; // 30 second timeout
+
+    xhr.onload = function() { _onDone(xhr.responseText, xhr.status); };
+    xhr.onerror = _onNetworkError;
+    xhr.ontimeout = function() {
+      if (indicator) indicator.style.display = 'none';
+      if (btn) { btn.disabled = false; btn.textContent = '🤖 Parse Invoice with AI'; }
+      _showAiError('Request timed out (30s). Check your internet connection and try again.', -2);
+    };
+    xhr.send(requestBody);
+  } catch(e) {
     if (indicator) indicator.style.display = 'none';
     if (btn) { btn.disabled = false; btn.textContent = '🤖 Parse Invoice with AI'; }
-    let msg = err.message || 'Unknown error';
-    if (msg.includes('401') || msg.toLowerCase().includes('auth')) msg = 'Invalid API key. Please check your key in the setup section above.';
-    else if (msg.includes('Failed to fetch') || msg.includes('NetworkError')) msg = 'Network error — check your internet connection.';
-    else if (msg.includes('403')) msg = 'API key does not have permission. Ensure it is an active Anthropic key.';
-    showToast('❌ AI parsing failed: ' + msg, true);
+    _showAiError('Failed to send request: ' + e.message, -3);
   }
 }
 
