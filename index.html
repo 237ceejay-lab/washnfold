@@ -926,6 +926,22 @@ body.mobile-view .card-title-row { flex-direction: column; align-items: flex-sta
       </div>
     </div>
 
+    <!-- API Key setup card -->
+    <div class="card" id="ai-apikey-card" style="background:rgba(116,185,255,0.05);border-color:rgba(116,185,255,0.3);">
+      <div class="card-title" style="color:var(--info);">▸ 🔑 AI Setup — Anthropic API Key</div>
+      <p style="font-size:0.82rem;color:var(--muted);margin-bottom:1rem;line-height:1.6;">
+        This feature uses the Claude AI to read your invoice. You need a free Anthropic API key. 
+        <a href="https://console.anthropic.com/settings/keys" target="_blank" style="color:var(--accent2);">Get your key here →</a><br>
+        <span style="font-size:0.75rem;color:var(--muted);">Your key is stored only on this device (localStorage) and never sent anywhere except directly to Anthropic's servers.</span>
+      </p>
+      <div style="display:flex;gap:0.7rem;align-items:center;flex-wrap:wrap;">
+        <input type="password" id="ai-api-key-input" placeholder="sk-ant-api03-..." style="flex:1;min-width:200px;background:var(--surface2);border:1px solid var(--border);border-radius:8px;padding:0.55rem 0.9rem;color:var(--text);font-family:'DM Mono',monospace;font-size:0.82rem;outline:none;">
+        <button class="btn btn-primary btn-sm" onclick="aiSaveApiKey()">💾 Save Key</button>
+        <button class="btn btn-sm btn-secondary" onclick="aiToggleKeyVisibility()">👁 Show</button>
+      </div>
+      <div id="ai-key-status" style="margin-top:0.6rem;font-family:'DM Mono',monospace;font-size:0.72rem;color:var(--muted);"></div>
+    </div>
+
     <div class="card">
       <div class="card-title">▸ Step 1 — Paste Your Invoice Text</div>
       <div class="form-group" style="margin-bottom:1rem;">
@@ -938,7 +954,7 @@ body.mobile-view .card-title-row { flex-direction: column; align-items: flex-sta
       </div>
     </div>
 
-    <div id="ai-parsing-indicator" style="display:none;" class="card" style="background:rgba(78,205,196,0.05);border-color:rgba(78,205,196,0.25);">
+    <div id="ai-parsing-indicator" style="display:none;" class="card">
       <div style="display:flex;align-items:center;gap:1rem;padding:0.5rem 0;">
         <div style="width:28px;height:28px;border:3px solid rgba(78,205,196,0.3);border-top-color:var(--accent2);border-radius:50%;animation:spin 0.9s linear infinite;flex-shrink:0;"></div>
         <div>
@@ -1009,7 +1025,7 @@ body.mobile-view .card-title-row { flex-direction: column; align-items: flex-sta
       </div>
     </div>
 
-    <div id="ai-import-success" style="display:none;" class="card" style="background:rgba(81,207,102,0.07);border-color:rgba(81,207,102,0.35);">
+    <div id="ai-import-success" style="display:none;" class="card">
       <div style="text-align:center;padding:1.5rem 0;">
         <div style="font-size:2.5rem;margin-bottom:0.8rem;">✅</div>
         <div style="font-family:'Playfair Display',serif;font-size:1.3rem;color:var(--success);margin-bottom:0.5rem;">Invoice Imported Successfully!</div>
@@ -9183,18 +9199,53 @@ function _loadSeedData() {
 // AI INVOICE IMPORTER — Parse pasted invoice text via Claude API
 // ══════════════════════════════════════════════════════════════════
 
-let _aiParsedData = null; // holds the last parsed result
+const AI_KEY_STORAGE = 'washnfold_ai_key';
+let _aiParsedData = null;
+
+// ── API Key helpers ──────────────────────────────────────────────
+function aiGetKey() {
+  try { return localStorage.getItem(AI_KEY_STORAGE) || ''; } catch(e) { return ''; }
+}
+
+function aiSaveApiKey() {
+  const val = (document.getElementById('ai-api-key-input')?.value || '').trim();
+  if (!val) { showToast('Please enter an API key.', true); return; }
+  if (!val.startsWith('sk-ant-')) { showToast('That does not look like a valid Anthropic API key (should start with sk-ant-).', true); return; }
+  try { localStorage.setItem(AI_KEY_STORAGE, val); } catch(e) {}
+  aiUpdateKeyStatus();
+  showToast('API key saved ✓ — you can now parse invoices.');
+}
+
+function aiToggleKeyVisibility() {
+  const inp = document.getElementById('ai-api-key-input');
+  const btn = document.querySelector('[onclick="aiToggleKeyVisibility()"]');
+  if (!inp) return;
+  inp.type = inp.type === 'password' ? 'text' : 'password';
+  if (btn) btn.textContent = inp.type === 'password' ? '👁 Show' : '🙈 Hide';
+}
+
+function aiUpdateKeyStatus() {
+  const key = aiGetKey();
+  const statusEl = document.getElementById('ai-key-status');
+  const inp = document.getElementById('ai-api-key-input');
+  if (!statusEl) return;
+  if (key) {
+    statusEl.innerHTML = '✅ <span style="color:var(--success);">API key saved on this device.</span> Key: <span style="color:var(--accent);font-family:\'DM Mono\',monospace;">' + key.slice(0,14) + '••••••••••••••••</span>';
+    if (inp) inp.placeholder = 'Key already saved — paste a new one to replace it';
+  } else {
+    statusEl.innerHTML = '⚠️ <span style="color:var(--accent);">No API key saved yet.</span> Enter your Anthropic API key above to enable AI parsing.';
+  }
+}
 
 function aiResetImport() {
   _aiParsedData = null;
-  const textEl = document.getElementById('ai-invoice-text');
-  // Only clear the text if we're fully resetting (not just navigating to page)
   ['ai-parse-result','ai-parsing-indicator','ai-import-success'].forEach(id => {
     const el = document.getElementById(id);
     if (el) el.style.display = 'none';
   });
   const btn = document.getElementById('ai-parse-btn');
   if (btn) { btn.disabled = false; btn.textContent = '🤖 Parse Invoice with AI'; }
+  aiUpdateKeyStatus();
 }
 
 function aiCancelImport() {
@@ -9207,79 +9258,82 @@ async function aiParseInvoice() {
   const text = (document.getElementById('ai-invoice-text')?.value || '').trim();
   if (!text) { showToast('Please paste an invoice to parse.', true); return; }
 
+  const apiKey = aiGetKey();
+  if (!apiKey) {
+    showToast('Please enter and save your Anthropic API key first (see the setup section above).', true);
+    document.getElementById('ai-api-key-input')?.focus();
+    return;
+  }
+
   const btn = document.getElementById('ai-parse-btn');
   const indicator = document.getElementById('ai-parsing-indicator');
-  const resultEl = document.getElementById('ai-parse-result');
+  const resultEl  = document.getElementById('ai-parse-result');
   const successEl = document.getElementById('ai-import-success');
 
   if (btn) { btn.disabled = true; btn.textContent = '⏳ Parsing...'; }
   if (indicator) indicator.style.display = '';
-  if (resultEl) resultEl.style.display = 'none';
+  if (resultEl)  resultEl.style.display  = 'none';
   if (successEl) successEl.style.display = 'none';
 
-  // Determine current month for defaulting
   const nowDate = new Date();
   const monthNames = ['January','February','March','April','May','June','July','August','September','October','November','December'];
   const currentMonth = monthNames[nowDate.getMonth()];
   const todayISO = nowDate.toISOString().split('T')[0];
 
-  const systemPrompt = `You are a data extraction assistant for Washn' Fold, a laundry business in Cameroon. 
-Extract structured invoice data from the provided text. Currency is FCFA.
-Service types: wash_only (washing only), wash_iron (washing + ironing), mixed (both types present).
-Return ONLY a valid JSON object with this exact structure, no markdown, no explanation:
-{
-  "customerName": "string",
-  "invoiceDate": "YYYY-MM-DD or empty string",
-  "collectionDate": "YYYY-MM-DD or empty string",
-  "paymentMonth": "month name in English e.g. April",
-  "serviceType": "wash_only|wash_iron|mixed",
-  "total": number (integer, FCFA amount — use 0 if not found),
-  "items": [
-    {
-      "label": "item description e.g. Light Dresses",
-      "qty": number,
-      "service": "wash_only|wash_iron",
-      "unitPrice": number,
-      "subtotal": number
-    }
-  ],
-  "notes": "any AI notes or uncertainties, empty string if none"
-}
-If a date is not explicitly given, leave it as an empty string.
-If the total is stated explicitly, use that value. Otherwise sum up the items.
-Today's date for reference: ${todayISO}. Current month: ${currentMonth}.`;
+  const systemPrompt = `You are a data extraction assistant for Washn' Fold, a laundry business in Cameroon. Currency is FCFA.
+Service types: wash_only = washing only, wash_iron = washing and ironing, mixed = both types present.
+Return ONLY a valid JSON object — no markdown fences, no explanation, no extra text. Exactly this structure:
+{"customerName":"string","invoiceDate":"YYYY-MM-DD or empty","collectionDate":"YYYY-MM-DD or empty","paymentMonth":"English month name","serviceType":"wash_only|wash_iron|mixed","total":0,"items":[{"label":"string","qty":0,"service":"wash_only|wash_iron","unitPrice":0,"subtotal":0}],"notes":"string"}
+Rules: If date not given leave empty. Use explicit total if stated, else sum items. Today: ${todayISO}. Current month: ${currentMonth}.`;
 
   try {
     const response = await fetch('https://api.anthropic.com/v1/messages', {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: {
+        'Content-Type': 'application/json',
+        'x-api-key': apiKey,
+        'anthropic-version': '2023-06-01',
+        'anthropic-dangerous-direct-browser-access': 'true'
+      },
       body: JSON.stringify({
-        model: 'claude-sonnet-4-20250514',
-        max_tokens: 1000,
+        model: 'claude-haiku-4-5-20251001',
+        max_tokens: 1024,
         system: systemPrompt,
-        messages: [{ role: 'user', content: `Parse this invoice:\n\n${text}` }]
+        messages: [{ role: 'user', content: 'Parse this invoice text:\n\n' + text }]
       })
     });
 
-    if (!response.ok) throw new Error('API error ' + response.status);
+    if (!response.ok) {
+      let errMsg = 'HTTP ' + response.status;
+      try {
+        const errData = await response.json();
+        errMsg = errData.error?.message || errMsg;
+      } catch(_) {}
+      throw new Error(errMsg);
+    }
+
     const data = await response.json();
-    const rawText = (data.content || []).filter(b => b.type === 'text').map(b => b.text).join('');
+    const rawText = (data.content || []).filter(b => b.type === 'text').map(b => b.text).join('').trim();
 
     // Strip any accidental markdown fences
-    const clean = rawText.replace(/```json|```/g, '').trim();
+    const clean = rawText.replace(/^```json\s*/,'').replace(/^```\s*/,'').replace(/\s*```$/,'').trim();
     const parsed = JSON.parse(clean);
 
     _aiParsedData = parsed;
     _aiPopulateForm(parsed);
 
     if (indicator) indicator.style.display = 'none';
-    if (resultEl) resultEl.style.display = '';
+    if (resultEl)  resultEl.style.display  = '';
     if (btn) { btn.disabled = false; btn.textContent = '🤖 Parse Invoice with AI'; }
 
   } catch (err) {
     if (indicator) indicator.style.display = 'none';
     if (btn) { btn.disabled = false; btn.textContent = '🤖 Parse Invoice with AI'; }
-    showToast('AI parsing failed: ' + err.message + '. Check your internet connection.', true);
+    let msg = err.message || 'Unknown error';
+    if (msg.includes('401') || msg.toLowerCase().includes('auth')) msg = 'Invalid API key. Please check your key in the setup section above.';
+    else if (msg.includes('Failed to fetch') || msg.includes('NetworkError')) msg = 'Network error — check your internet connection.';
+    else if (msg.includes('403')) msg = 'API key does not have permission. Ensure it is an active Anthropic key.';
+    showToast('❌ AI parsing failed: ' + msg, true);
   }
 }
 
@@ -9287,40 +9341,33 @@ function _aiPopulateForm(parsed) {
   const monthNames = ['January','February','March','April','May','June','July','August','September','October','November','December'];
   const todayISO = new Date().toISOString().split('T')[0];
 
-  // Customer name
   const nameEl = document.getElementById('ai-customer-name');
   if (nameEl) nameEl.value = parsed.customerName || '';
 
-  // Dates
   const invDateEl = document.getElementById('ai-invoice-date');
   if (invDateEl) invDateEl.value = parsed.invoiceDate || todayISO;
 
   const collDateEl = document.getElementById('ai-collection-date');
   if (collDateEl) collDateEl.value = parsed.collectionDate || parsed.invoiceDate || todayISO;
 
-  // Payment month
   const monthEl = document.getElementById('ai-payment-month');
   if (monthEl) {
     const m = (parsed.paymentMonth || '').trim();
     const found = monthNames.find(mn => mn.toLowerCase() === m.toLowerCase());
     if (found) monthEl.value = found;
     else {
-      // Default to month of collection date or today
       const dateStr = parsed.collectionDate || parsed.invoiceDate || todayISO;
-      const monthIdx = new Date(dateStr).getMonth();
-      if (!isNaN(monthIdx)) monthEl.value = monthNames[monthIdx];
+      const idx = new Date(dateStr).getMonth();
+      if (!isNaN(idx)) monthEl.value = monthNames[idx];
     }
   }
 
-  // Service type
   const svcEl = document.getElementById('ai-service-type');
   if (svcEl) svcEl.value = parsed.serviceType || 'wash_only';
 
-  // Total
   const totalEl = document.getElementById('ai-total-amount');
   if (totalEl) totalEl.value = parsed.total || 0;
 
-  // Items list
   const itemsEl = document.getElementById('ai-items-list');
   if (itemsEl) {
     if (!Array.isArray(parsed.items) || parsed.items.length === 0) {
@@ -9329,27 +9376,24 @@ function _aiPopulateForm(parsed) {
       itemsEl.innerHTML = `<table style="width:100%;border-collapse:collapse;font-size:0.82rem;">
         <thead><tr style="color:var(--muted);font-family:'DM Mono',monospace;font-size:0.7rem;">
           <th style="text-align:left;padding:0.3rem 0.4rem;border-bottom:1px solid var(--border);">Item</th>
-          <th style="text-align:center;padding:0.3rem 0.4rem;border-bottom:1px solid var(--border);">Qty</th>
+          <th style="text-align:center;padding:0.3rem;border-bottom:1px solid var(--border);">Qty</th>
           <th style="text-align:left;padding:0.3rem 0.4rem;border-bottom:1px solid var(--border);">Service</th>
           <th style="text-align:right;padding:0.3rem 0.4rem;border-bottom:1px solid var(--border);">Unit Price</th>
           <th style="text-align:right;padding:0.3rem 0.4rem;border-bottom:1px solid var(--border);">Subtotal</th>
-        </tr></thead>
-        <tbody>
+        </tr></thead><tbody>
         ${parsed.items.map(it => `<tr>
           <td style="padding:0.35rem 0.4rem;border-bottom:1px solid rgba(45,55,72,0.4);">${escHtml(it.label||'Item')}</td>
-          <td style="padding:0.35rem 0.4rem;border-bottom:1px solid rgba(45,55,72,0.4);text-align:center;font-family:'DM Mono',monospace;">${it.qty||0}</td>
-          <td style="padding:0.35rem 0.4rem;border-bottom:1px solid rgba(45,55,72,0.4);">${it.service === 'wash_iron' ? 'Wash & Iron' : 'Wash Only'}</td>
+          <td style="padding:0.35rem 0.3rem;border-bottom:1px solid rgba(45,55,72,0.4);text-align:center;font-family:'DM Mono',monospace;">${it.qty||0}</td>
+          <td style="padding:0.35rem 0.4rem;border-bottom:1px solid rgba(45,55,72,0.4);">${it.service==='wash_iron'?'Wash & Iron':'Wash Only'}</td>
           <td style="padding:0.35rem 0.4rem;border-bottom:1px solid rgba(45,55,72,0.4);text-align:right;font-family:'DM Mono',monospace;color:var(--muted);">${(it.unitPrice||0).toLocaleString()}</td>
           <td style="padding:0.35rem 0.4rem;border-bottom:1px solid rgba(45,55,72,0.4);text-align:right;font-family:'DM Mono',monospace;color:var(--accent);">${(it.subtotal||0).toLocaleString()}</td>
         </tr>`).join('')}
-        </tbody>
-      </table>`;
+        </tbody></table>`;
     }
   }
 
-  // Notes
   const notesSection = document.getElementById('ai-notes-section');
-  const notesText = document.getElementById('ai-notes-text');
+  const notesText    = document.getElementById('ai-notes-text');
   if (notesSection && notesText) {
     if (parsed.notes && parsed.notes.trim()) {
       notesText.textContent = parsed.notes;
@@ -9362,10 +9406,10 @@ function _aiPopulateForm(parsed) {
 
 function aiConfirmImport() {
   const customerName = (document.getElementById('ai-customer-name')?.value || '').trim();
-  const invoiceDate  = document.getElementById('ai-invoice-date')?.value || '';
+  const invoiceDate  = document.getElementById('ai-invoice-date')?.value  || '';
   const collDate     = document.getElementById('ai-collection-date')?.value || invoiceDate;
-  const payMonth     = document.getElementById('ai-payment-month')?.value || 'January';
-  const serviceType  = document.getElementById('ai-service-type')?.value || 'wash_only';
+  const payMonth     = document.getElementById('ai-payment-month')?.value  || 'January';
+  const serviceType  = document.getElementById('ai-service-type')?.value   || 'wash_only';
   const totalAmount  = parseInt(document.getElementById('ai-total-amount')?.value || '0') || 0;
 
   if (!customerName) { showToast('Customer name is required.', true); return; }
@@ -9373,106 +9417,57 @@ function aiConfirmImport() {
   if (totalAmount <= 0) { showToast('Total amount must be greater than zero.', true); return; }
 
   const parsed = _aiParsedData || {};
-
-  // ── Build invoice record ─────────────────────────────────────────
   const invId  = 'inv_ai_' + Date.now() + '_' + Math.random().toString(36).slice(2,5);
   const finId  = 'fin_ai_' + Date.now() + '_' + Math.random().toString(36).slice(2,5);
   const delId  = 'del_ai_' + Date.now() + '_' + Math.random().toString(36).slice(2,5);
 
-  // Build invoice text summary
   const items = Array.isArray(parsed.items) && parsed.items.length > 0 ? parsed.items : [];
-  let invoiceText = `Washn' Fold — Invoice (AI Import)\nCustomer: ${customerName}\nDate: ${invoiceDate}\n`;
+  let invoiceText = "Washn' Fold — Invoice (AI Import)\nCustomer: " + customerName + '\nDate: ' + invoiceDate + '\n';
   if (items.length > 0) {
     invoiceText += '\nItems:\n';
     items.forEach(it => {
-      invoiceText += `  ${it.qty||0}x ${it.label||'Item'} (${it.service==='wash_iron'?'Wash & Iron':'Wash Only'}) — ${(it.subtotal||0).toLocaleString()} FCFA\n`;
+      invoiceText += '  ' + (it.qty||0) + 'x ' + (it.label||'Item') + ' (' + (it.service==='wash_iron'?'Wash & Iron':'Wash Only') + ') — ' + (it.subtotal||0).toLocaleString() + ' FCFA\n';
     });
   }
-  invoiceText += `\nTotal: ${totalAmount.toLocaleString()} FCFA`;
+  invoiceText += '\nTotal: ' + totalAmount.toLocaleString() + ' FCFA';
 
-  // Calculate delivery date (use system settings)
-  const preDays = DB.settings.preDays || 2;
+  const preDays  = DB.settings.preDays  || 2;
   const postDays = DB.settings.postDays || 2;
-  const collDateObj = new Date(collDate);
-  const deliveryDateObj = new Date(collDateObj.getTime() + (preDays + postDays) * 86400000);
-  const deliveryDate = deliveryDateObj.toISOString().split('T')[0];
+  const collDateObj   = new Date(collDate);
+  const deliveryDate  = new Date(collDateObj.getTime() + (preDays + postDays) * 86400000).toISOString().split('T')[0];
 
-  const invoiceRec = {
-    id: invId,
-    date: invoiceDate,
-    customerName,
-    collectionDate: collDate,
-    deliveryDate,
-    items: items.map(it => ({
-      label: it.label || 'Item',
-      qty: it.qty || 0,
-      service: it.service || serviceType,
-      unitPrice: it.unitPrice || 0,
-      subtotal: it.subtotal || 0,
-      color: 'Colored',
-      dressType: null
-    })),
-    total: totalAmount,
-    paymentStatus: 'unpaid',
-    paidAmount: 0,
-    serviceTypes: serviceType,
-    bagCost: 0,
-    bagIncluded: DB.settings.defaultBagIncluded !== false,
-    parcelingIncluded: true,
-    invoiceText,
-    _importedViaAI: true,
-    _importedAt: new Date().toISOString()
-  };
-
-  // Finance record
-  const financeRec = {
-    id: finId,
-    customer: customerName,
-    month: payMonth,
-    amount: totalAmount,
-    paidAmount: 0,
-    status: 'unpaid',
-    paymentMethod: '-',
-    date: collDate || invoiceDate,
-    dateModified: new Date().toISOString().split('T')[0],
-    invoiceId: invId
-  };
-
-  // Delivery record
-  const deliveryRec = {
-    id: delId,
-    invoiceId: invId,
-    customer: customerName,
-    serviceTypes: serviceType,
-    collectionDate: collDate || invoiceDate,
-    expectedDate: deliveryDate,
-    status: 'pending',
-    deliveredDate: null
-  };
-
-  // ── Save to DB ───────────────────────────────────────────────────
-  DB.invoices.unshift(invoiceRec);
-  DB.finance.unshift(financeRec);
-  DB.deliveries.unshift(deliveryRec);
+  DB.invoices.unshift({
+    id: invId, date: invoiceDate, customerName, collectionDate: collDate, deliveryDate,
+    items: items.map(it => ({ label: it.label||'Item', qty: it.qty||0, service: it.service||serviceType, unitPrice: it.unitPrice||0, subtotal: it.subtotal||0, color:'Colored', dressType:null })),
+    total: totalAmount, paymentStatus: 'unpaid', paidAmount: 0, serviceTypes: serviceType,
+    bagCost: 0, bagIncluded: DB.settings.defaultBagIncluded !== false, parcelingIncluded: true,
+    invoiceText, _importedViaAI: true, _importedAt: new Date().toISOString()
+  });
+  DB.finance.unshift({
+    id: finId, customer: customerName, month: payMonth, amount: totalAmount,
+    paidAmount: 0, status: 'unpaid', paymentMethod: '-',
+    date: collDate || invoiceDate, dateModified: new Date().toISOString().split('T')[0], invoiceId: invId
+  });
+  DB.deliveries.unshift({
+    id: delId, invoiceId: invId, customer: customerName, serviceTypes: serviceType,
+    collectionDate: collDate || invoiceDate, expectedDate: deliveryDate, status: 'pending', deliveredDate: null
+  });
   if (!DB.customerHistory[customerName]) {
     DB.customerHistory[customerName] = { lastService: serviceType, lastDate: collDate || invoiceDate };
   }
 
   renderAll();
   saveData(true);
-  logActivity('AI Import', `AI-imported invoice for ${customerName} — ${totalAmount.toLocaleString()} FCFA (${payMonth})`);
+  logActivity('AI Import', 'AI-imported invoice for ' + customerName + ' — ' + totalAmount.toLocaleString() + ' FCFA (' + payMonth + ')');
 
-  // Show success
-  const resultEl = document.getElementById('ai-parse-result');
-  const successEl = document.getElementById('ai-import-success');
-  const successText = document.getElementById('ai-success-text');
-  if (resultEl) resultEl.style.display = 'none';
-  if (successEl) successEl.style.display = '';
-  if (successText) successText.textContent = `Invoice for ${customerName} (${totalAmount.toLocaleString()} FCFA) has been added to Invoices, Finance, and Deliveries. It is now fully synced across the entire system.`;
+  document.getElementById('ai-parse-result').style.display = 'none';
+  document.getElementById('ai-import-success').style.display = '';
+  const st = document.getElementById('ai-success-text');
+  if (st) st.textContent = 'Invoice for ' + customerName + ' (' + totalAmount.toLocaleString() + ' FCFA) has been added to Invoices, Finance, and Deliveries. It is now fully synced across the entire system.';
 
   _aiParsedData = null;
-  showToast(`✅ Invoice for ${customerName} imported & synced ✓`);
-  addNotification(`AI Invoice imported: ${customerName} — ${totalAmount.toLocaleString()} FCFA`, 'success');
+  showToast('✅ Invoice for ' + customerName + ' imported & synced ✓');
+  addNotification('AI Invoice imported: ' + customerName + ' — ' + totalAmount.toLocaleString() + ' FCFA', 'success');
 }
 
 // ── Add spin animation if not already present ────────────────────
