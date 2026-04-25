@@ -3140,6 +3140,8 @@ function _mergeAndUpdatePresence(firebaseSessions) {
     const now   = Date.now();
     const all   = JSON.parse(localStorage.getItem('washnfold_presence_local') || '{}');
     Object.entries(all).forEach(function([tabId, s]) {
+      // Skip own tab — it is always counted as "+1 (you)" in _updatePresenceBadge
+      if (tabId === window._myTabId) return;
       if (now - s.lastSeen < STALE && !seen.has(tabId)) {
         seen.add(tabId);
         merged.push({ sessionId: tabId, username: s.username, accountType: s.accountType });
@@ -3325,6 +3327,20 @@ function initApp() {
           downloadsAccessList:        DB.settings.downloadsAccessList,
         };
 
+        // Protect locally-created records that postdate this snapshot.
+        // Record IDs embed a Date.now() timestamp (e.g. inv_1745123456789).
+        // Any record newer than updatedAt that is absent from the incoming snapshot
+        // was created locally after this snapshot was saved — we must re-inject it
+        // after mergeLoadedData (which would otherwise replace the arrays wholesale).
+        const _snapshotMs = updatedAt ? new Date(updatedAt).getTime() : 0;
+        function _idMs(id) { const m = id && id.match(/(\d{13})/); return m ? parseInt(m[1]) : 0; }
+        const _loadedInvIds = new Set((loaded.invoices   || []).map(r => r.id));
+        const _loadedFinIds = new Set((loaded.finance    || []).map(r => r.id));
+        const _loadedDelIds = new Set((loaded.deliveries || []).map(r => r.id));
+        const _localNewInvoices   = DB.invoices.filter(r => _idMs(r.id) > _snapshotMs && !_loadedInvIds.has(r.id));
+        const _localNewFinance    = DB.finance.filter(r => _idMs(r.id) > _snapshotMs && !_loadedFinIds.has(r.id));
+        const _localNewDeliveries = DB.deliveries.filter(r => _idMs(r.id) > _snapshotMs && !_loadedDelIds.has(r.id));
+
         mergeLoadedData(loaded);
 
         // Restore session-critical data
@@ -3354,7 +3370,18 @@ function initApp() {
           DB.recycleBin = [..._binMap2.values()].sort((a,b) => (b.deletedAt||'') > (a.deletedAt||'') ? 1 : -1);
         }
 
+        // Re-inject locally-created records that the incoming snapshot did not contain.
+        // This prevents a concurrent remote write from silently erasing records that were
+        // added on this device but not yet reflected in Firebase at snapshot time.
+        let _hadLocalNew = false;
+        if (_localNewInvoices.length)   { DB.invoices   = [..._localNewInvoices,   ...DB.invoices];   _hadLocalNew = true; }
+        if (_localNewFinance.length)    { DB.finance    = [..._localNewFinance,    ...DB.finance];     _hadLocalNew = true; }
+        if (_localNewDeliveries.length) { DB.deliveries = [..._localNewDeliveries, ...DB.deliveries]; _hadLocalNew = true; }
+
         renderAll();
+        // If we rescued locally-created records, push the complete state back to Firebase
+        // immediately so those records survive any subsequent remote sync.
+        if (_hadLocalNew) saveData(true);
         const ind = document.getElementById('autosave-indicator');
         if (ind) {
           ind.style.color = 'var(--info)';
@@ -4355,12 +4382,16 @@ function finClearSelection() {
 function finDeleteSelected() {
   const n = _finSelectedIds.size;
   if (n === 0) { showToast('No records selected.', true); return; }
-  if (!confirm('Delete ' + n + ' selected record' + (n !== 1 ? 's' : '') + '? This cannot be undone.')) return;
-  // Track deleted seed IDs before removing
+  if (!confirm('Move ' + n + ' selected record' + (n !== 1 ? 's' : '') + ' to Recycle Bin?')) return;
   if (!DB.deletedSeedIds) DB.deletedSeedIds = [];
   _finSelectedIds.forEach(rid => {
-    if (rid && rid.startsWith('fin_seed_') && !DB.deletedSeedIds.includes(rid))
-      DB.deletedSeedIds.push(rid);
+    const rec = DB.finance.find(r => r.id === rid);
+    if (!rec) return;
+    if (rid.startsWith('fin_seed_')) {
+      if (!DB.deletedSeedIds.includes(rid)) DB.deletedSeedIds.push(rid);
+    } else {
+      _sendToRecycleBin('finance', rec);
+    }
   });
   DB.finance = DB.finance.filter(r => !_finSelectedIds.has(r.id));
   _finSelectedIds.clear();
@@ -4375,8 +4406,16 @@ function finDeleteAllFiltered() {
   const filtered = window._filteredFinance || [];
   const n = filtered.length;
   if (n === 0) { showToast('No filtered records to delete.', true); return; }
-  if (!confirm('Delete ALL ' + n + ' filtered record' + (n !== 1 ? 's' : '') + '? This cannot be undone.')) return;
-  if (n > 50 && !confirm('This will permanently delete ' + n + ' records. Are you absolutely sure?')) return;
+  if (!confirm('Move ALL ' + n + ' filtered record' + (n !== 1 ? 's' : '') + ' to Recycle Bin?')) return;
+  if (n > 50 && !confirm('This will move ' + n + ' records to the Recycle Bin. Are you absolutely sure?')) return;
+  if (!DB.deletedSeedIds) DB.deletedSeedIds = [];
+  filtered.forEach(rec => {
+    if (rec.id.startsWith('fin_seed_')) {
+      if (!DB.deletedSeedIds.includes(rec.id)) DB.deletedSeedIds.push(rec.id);
+    } else {
+      _sendToRecycleBin('finance', rec);
+    }
+  });
   const idsToDelete = new Set(filtered.map(r => r.id));
   DB.finance = DB.finance.filter(r => !idsToDelete.has(r.id));
   _finSelectedIds.clear();
@@ -4759,7 +4798,7 @@ function confirmPayment() {
 }
 
 function confirmEditPayment() {
-  const newPaid = parseInt(document.getElementById('pay-edit-amount').value) || 0;
+  const newPaid = Math.max(0, parseInt(document.getElementById('pay-edit-amount').value) || 0);
   const method = document.getElementById('pay-edit-method').value;
   const rec = _getPayRec();
   if (!rec) { showToast('Record not found.', true); return; }
@@ -5681,8 +5720,7 @@ function addMaterial() {
   document.getElementById('mat-notes').value = '';
   renderMaterials();
   saveData();
-  logActivity('Material Added', `Added: ${matName}`, 'materials'); showToast('Material added ✓');
-  logActivity('Add Material', `Added material: ${name}`);
+  logActivity('Add Material', `Added material: ${name}`); showToast('Material added ✓');
 }
 
 function renderMaterials() {
@@ -5698,11 +5736,12 @@ function renderMaterials() {
       daysClass = daysLeft <= 3 ? 'color:var(--danger);font-weight:700;' : daysLeft <= 7 ? 'color:var(--accent);' : 'color:var(--success);';
     }
     const priBadge = `<span class="badge badge-priority-${m.priority}">${m.priority}</span>`;
-    return `<tr><td><b>${escHtml(m.name)}</b></td><td style="font-family:'DM Mono',monospace;font-size:0.78rem;">${m.purchaseDate ? formatDate(m.purchaseDate) : '—'}</td><td style="font-family:'DM Mono',monospace;font-size:0.78rem;">${m.finishDate ? formatDate(m.finishDate) : '—'}</td><td style="font-family:'DM Mono',monospace;${daysClass}">${daysLeft}</td><td>${priBadge}</td><td style="font-size:0.78rem;color:var(--muted);">${escHtml(m.notes||'')}</td><td><button class="btn btn-sm btn-danger" onclick="deleteMaterial(${i})">✕</button></td></tr>`;
+    return `<tr><td><b>${escHtml(m.name)}</b></td><td style="font-family:'DM Mono',monospace;font-size:0.78rem;">${m.purchaseDate ? formatDate(m.purchaseDate) : '—'}</td><td style="font-family:'DM Mono',monospace;font-size:0.78rem;">${m.finishDate ? formatDate(m.finishDate) : '—'}</td><td style="font-family:'DM Mono',monospace;${daysClass}">${daysLeft}</td><td>${priBadge}</td><td style="font-size:0.78rem;color:var(--muted);">${escHtml(m.notes||'')}</td><td><button class="btn btn-sm btn-danger" onclick="deleteMaterial('${m.id}')">✕</button></td></tr>`;
   }).join('');
 }
 
-function deleteMaterial(i) {
+function deleteMaterial(id) {
+  const i = DB.materials.findIndex(m => m.id === id);
   const mat = DB.materials[i];
   if (!mat) return;
   if (!confirm(`Move "${mat.name}" to Recycle Bin?`)) return;
@@ -5749,8 +5788,7 @@ function renderReminders() {
       const dt = new Date(r.datetime);
       const isPast = dt < now;
       const priBadge = `<span class="badge badge-priority-${r.priority}">${r.priority}</span>`;
-      const idx = DB.reminders.indexOf(r);
-      return `<div style="background:var(--surface2);border:1px solid ${isPast?'rgba(255,107,107,0.4)':'var(--border)'};border-radius:8px;padding:0.8rem;margin-bottom:0.5rem;"><div style="display:flex;justify-content:space-between;align-items:flex-start;gap:0.5rem;"><div style="flex:1;"><div style="font-weight:500;font-size:0.88rem;">${escHtml(r.title)} ${priBadge}</div><div style="font-size:0.72rem;color:var(--muted);margin-top:0.2rem;font-family:'DM Mono',monospace;">${dt.toLocaleDateString()} ${dt.toLocaleTimeString([], {hour:'2-digit',minute:'2-digit'})} · ${r.type}</div>${r.desc?`<div style="font-size:0.78rem;color:var(--muted);margin-top:0.3rem;">${escHtml(r.desc)}</div>`:''}</div><div style="display:flex;gap:0.3rem;"><button class="btn btn-sm btn-success" style="padding:0.25rem 0.5rem;" onclick="doneReminder(${idx})">✓</button><button class="btn btn-sm btn-danger" style="padding:0.25rem 0.5rem;" onclick="deleteReminder(${idx})">✕</button></div></div></div>`;
+      return `<div style="background:var(--surface2);border:1px solid ${isPast?'rgba(255,107,107,0.4)':'var(--border)'};border-radius:8px;padding:0.8rem;margin-bottom:0.5rem;"><div style="display:flex;justify-content:space-between;align-items:flex-start;gap:0.5rem;"><div style="flex:1;"><div style="font-weight:500;font-size:0.88rem;">${escHtml(r.title)} ${priBadge}</div><div style="font-size:0.72rem;color:var(--muted);margin-top:0.2rem;font-family:'DM Mono',monospace;">${dt.toLocaleDateString()} ${dt.toLocaleTimeString([], {hour:'2-digit',minute:'2-digit'})} · ${r.type}</div>${r.desc?`<div style="font-size:0.78rem;color:var(--muted);margin-top:0.3rem;">${escHtml(r.desc)}</div>`:''}</div><div style="display:flex;gap:0.3rem;"><button class="btn btn-sm btn-success" style="padding:0.25rem 0.5rem;" onclick="doneReminder('${r.id}')">✓</button><button class="btn btn-sm btn-danger" style="padding:0.25rem 0.5rem;" onclick="deleteReminder('${r.id}')">✕</button></div></div></div>`;
     }).join('');
   }
 
@@ -5758,7 +5796,9 @@ function renderReminders() {
   renderRemList(monthRems, 'reminders-month');
 }
 
-function doneReminder(idx) {
+function doneReminder(id) {
+  const idx = DB.reminders.findIndex(r => r.id === id);
+  if (idx === -1) return;
   const rem = DB.reminders[idx];
   DB.reminders[idx].done = true;
   renderReminders();
@@ -5766,7 +5806,8 @@ function doneReminder(idx) {
   showToast('Marked as done ✓');
   logActivity('Complete Reminder', `Marked reminder done: "${rem ? rem.title : 'unknown'}"`);
 }
-function deleteReminder(idx) {
+function deleteReminder(id) {
+  const idx = DB.reminders.findIndex(r => r.id === id);
   const rem = DB.reminders[idx];
   if (!rem) return;
   if (!confirm(`Move reminder "${rem.title}" to Recycle Bin?`)) return;
@@ -5801,15 +5842,15 @@ function renderExpenses() {
   if (!tbody) return;
   if (DB.expenses.length === 0) { tbody.innerHTML = `<tr><td colspan="5" style="text-align:center;color:var(--muted);padding:2rem;">No expenses recorded.</td></tr>`; return; }
   const sorted = [...DB.expenses].sort((a,b) => (b.date||'').localeCompare(a.date||''));
-  tbody.innerHTML = sorted.map((e, idx) => {
-    const realIdx = DB.expenses.indexOf(e);
-    return `<tr><td style="font-family:'DM Mono',monospace;font-size:0.78rem;">${formatDate(e.date)}</td><td>${escHtml(e.item)}</td><td><span class="tag">${e.category}</span></td><td style="font-family:'DM Mono',monospace;color:var(--danger);">${e.amount.toLocaleString()}</td><td><button class="btn btn-sm btn-danger" onclick="deleteExpense(${realIdx})">✕</button></td></tr>`;
+  tbody.innerHTML = sorted.map((e) => {
+    return `<tr><td style="font-family:'DM Mono',monospace;font-size:0.78rem;">${formatDate(e.date)}</td><td>${escHtml(e.item)}</td><td><span class="tag">${e.category}</span></td><td style="font-family:'DM Mono',monospace;color:var(--danger);">${e.amount.toLocaleString()}</td><td><button class="btn btn-sm btn-danger" onclick="deleteExpense('${e.id}')">✕</button></td></tr>`;
   }).join('');
   const total = DB.expenses.reduce((s,e) => s+e.amount, 0);
   const el = document.getElementById('total-expenses'); if (el) el.textContent = total.toLocaleString() + ' FCFA';
 }
 
-function deleteExpense(i) {
+function deleteExpense(id) {
+  const i = DB.expenses.findIndex(e => e.id === id);
   const exp = DB.expenses[i];
   if (!exp) return;
   if (!confirm(`Move "${exp.item}" (${exp.amount.toLocaleString()} FCFA) to Recycle Bin?`)) return;
@@ -5823,6 +5864,7 @@ function deleteExpense(i) {
 }
 
 function exportExpensesPDF() {
+  if (!window.jspdf) { showToast('PDF library not loaded. Please check your connection and try again.', true); return; }
   const { jsPDF } = window.jspdf;
   const doc = new jsPDF({ unit:'mm', format:'a4' });
   const pageW = 210; const margin = 18; const cW = pageW - margin*2;
@@ -6568,10 +6610,21 @@ function changePassword() {
   const old = document.getElementById('set-old-pass').value;
   const nw = document.getElementById('set-new-pass').value;
   const cf = document.getElementById('set-conf-pass').value;
-  if (old !== DB.credentials.password) { showToast('Current password is incorrect.', true); return; }
+  // Resolve current password store based on account type
+  let _currentPwd, _setPwd;
+  if (currentAccountType === 'admin' && currentAdminAccountId && currentAdminAccountId !== 'legacy') {
+    const acct = (DB.adminAccounts || []).find(a => a.id === currentAdminAccountId);
+    if (!acct) { showToast('Admin account not found.', true); return; }
+    _currentPwd = acct.password;
+    _setPwd = (p) => { acct.password = p; };
+  } else {
+    _currentPwd = DB.credentials.password;
+    _setPwd = (p) => { DB.credentials.password = p; };
+  }
+  if (old !== _currentPwd) { showToast('Current password is incorrect.', true); return; }
   if (nw !== cf) { showToast('Passwords do not match.', true); return; }
   if (nw.length < 6) { showToast('Password must be at least 6 characters.', true); return; }
-  DB.credentials.password = nw;
+  _setPwd(nw);
   document.getElementById('set-old-pass').value = '';
   document.getElementById('set-new-pass').value = '';
   document.getElementById('set-conf-pass').value = '';
@@ -7256,6 +7309,7 @@ function exportDeptHistoryXLSX() {
 
 function exportDeptHistoryPDF() {
   if (DB.deptHistory.length === 0) { showToast('No history to export.', true); return; }
+  if (!window.jspdf) { showToast('PDF library not loaded. Please check your connection and try again.', true); return; }
   const { jsPDF } = window.jspdf;
   const doc = new jsPDF({ unit:'mm', format:'a4' });
   const pageW = 210; const margin = 15; const contentW = pageW - margin*2;
@@ -7312,6 +7366,7 @@ function exportMaterialsXLSX() {
 
 function exportMaterialsPDF() {
   if (DB.materials.length === 0) { showToast('No materials to export.', true); return; }
+  if (!window.jspdf) { showToast('PDF library not loaded. Please check your connection and try again.', true); return; }
   const { jsPDF } = window.jspdf;
   const doc = new jsPDF({ unit:'mm', format:'a4' });
   const pageW = 210; const margin = 15; const contentW = pageW - margin*2;
@@ -7698,6 +7753,7 @@ function clearDataFinal() {
   DB.invoices = []; DB.finance = []; DB.deliveries = []; DB.materials = [];
   DB.reminders = []; DB.expenses = []; DB.notifications = [];
   DB.deptHistory = []; DB.adminActivityLog = []; DB.customerHistory = {};
+  DB.recycleBin = []; DB.deletedSeedIds = []; DB.appDownloads = [];
   DB.activityLog = [{ id:'al_init', timestamp: new Date().toISOString(),
     accountType:'superuser', username: currentAccountUsername,
     action:'Clear All Data', detail:'All data cleared by Super User', page:'' }];
@@ -7714,6 +7770,7 @@ function clearDataFinal() {
 // PDF DOWNLOAD
 // ══════════════════════════════════════════════════════════════════
 function downloadPDF() {
+  if (!window.jspdf) { showToast('PDF library not loaded. Please check your connection and try again.', true); return; }
   const { jsPDF } = window.jspdf;
   const doc = new jsPDF({ unit:'mm', format:'a4' });
   const pageW = 210; const margin = 18; const contentW = pageW - margin*2;
@@ -8023,6 +8080,7 @@ document.addEventListener('click', function(e) {
 });
 
 function exportInvoicesXLSX(exportAll = false) {
+  if (typeof XLSX === 'undefined') { showToast('Excel library not loaded. Please check your connection and try again.', true); return; }
   const data = exportAll ? DB.invoices : (window._filteredInvoices || DB.invoices);
   const label = exportAll ? 'All' : 'Filtered';
   const ws_data = [['S/N','Date','Customer','Collection Date','Delivery Date','Total (FCFA)','Service Type','Payment Status','Paid (FCFA)','Sent?']];
@@ -8036,6 +8094,7 @@ function exportInvoicesXLSX(exportAll = false) {
 }
 
 function exportDeliveryXLSX(exportAll = false) {
+  if (typeof XLSX === 'undefined') { showToast('Excel library not loaded. Please check your connection and try again.', true); return; }
   const data = exportAll ? DB.deliveries : (window._filteredDeliveries || DB.deliveries.filter(d => d.status === 'pending'));
   const label = exportAll ? 'All' : 'Filtered';
   const ws_data = [['S/N','Customer','Service Type','Collection Date','Expected Delivery','Status','Delivered Date','Days Taken']];
@@ -9508,7 +9567,7 @@ function aiItemChange(idx, field, val) {
   // Update total field
   const newTotal = _editableItems.reduce((s, it) => s + (it.subtotal || 0), 0);
   const totalEl  = document.getElementById('ai-total-amount');
-  if (totalEl && newTotal > 0) totalEl.value = newTotal;
+  if (totalEl) totalEl.value = newTotal;
   // Update overall service type
   const svcEl = document.getElementById('ai-service-type');
   if (svcEl) {
@@ -9526,10 +9585,10 @@ function aiAddItem() {
 function aiRemoveItem(idx) {
   _editableItems.splice(idx, 1);
   _renderEditableItems(_editableItems);
-  // Recalculate total
+  // Recalculate total (always update, even if 0)
   const newTotal = _editableItems.reduce((s, it) => s + (it.subtotal || 0), 0);
   const totalEl  = document.getElementById('ai-total-amount');
-  if (totalEl && newTotal > 0) totalEl.value = newTotal;
+  if (totalEl) totalEl.value = newTotal;
 }
 
 // ══════════════════════════════════════════════════════════════════
@@ -9893,6 +9952,7 @@ document.addEventListener('DOMContentLoaded', () => {
 (function() {
   const PRESENCE_KEY = 'washnfold_presence_local';
   const MY_TAB_ID   = 'tab_' + Date.now() + '_' + Math.random().toString(36).slice(2,6);
+  window._myTabId = MY_TAB_ID; // exposed so _mergeAndUpdatePresence can exclude own tab
   let _localHb = null;
 
   function _writeLocalPresence() {
@@ -9931,7 +9991,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
       // Pass local-only sessions to the merge function
       // (Firebase sessions will be added by the Firebase listener separately)
-      const others = active.filter(([id]) => id !== MY_TAB_ID).map(([,s]) => ({
+      const others = active.filter(([id]) => id !== MY_TAB_ID).map(([id, s]) => ({
         sessionId: id, username: s.username, accountType: s.accountType
       }));
       // Only use local badge update if Firebase is blocked (avoid overwriting Firebase data)
