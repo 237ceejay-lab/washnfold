@@ -9372,20 +9372,33 @@ async function aiParseInvoice() {
 
 function _aiPopulateForm(parsed) {
   const monthNames = ['January','February','March','April','May','June','July','August','September','October','November','December'];
-  const todayISO = new Date().toISOString().split('T')[0];
+  const todayISO   = new Date().toISOString().split('T')[0];
 
+  // Customer
   const nameEl = document.getElementById('ai-customer-name');
   if (nameEl) nameEl.value = parsed.customerName || '';
 
+  // Invoice date
   const invDateEl = document.getElementById('ai-invoice-date');
   if (invDateEl) invDateEl.value = parsed.invoiceDate || todayISO;
 
+  // Collection date — if missing, clear the field and highlight it
   const collDateEl = document.getElementById('ai-collection-date');
-  if (collDateEl) collDateEl.value = parsed.collectionDate || parsed.invoiceDate || todayISO;
+  if (collDateEl) {
+    collDateEl.value = parsed.collectionDate || '';
+    if (parsed._noCollectionDate || !parsed.collectionDate) {
+      collDateEl.style.border = '2px solid var(--accent)';
+      collDateEl.placeholder  = '⚠ Please enter collection date';
+    } else {
+      collDateEl.style.border = '';
+      collDateEl.placeholder  = '';
+    }
+  }
 
+  // Payment month
   const monthEl = document.getElementById('ai-payment-month');
   if (monthEl) {
-    const m = (parsed.paymentMonth || '').trim();
+    const m     = (parsed.paymentMonth || '').trim();
     const found = monthNames.find(mn => mn.toLowerCase() === m.toLowerCase());
     if (found) monthEl.value = found;
     else {
@@ -9395,46 +9408,128 @@ function _aiPopulateForm(parsed) {
     }
   }
 
+  // Service type
   const svcEl = document.getElementById('ai-service-type');
   if (svcEl) svcEl.value = parsed.serviceType || 'wash_only';
 
+  // Total
   const totalEl = document.getElementById('ai-total-amount');
   if (totalEl) totalEl.value = parsed.total || 0;
 
-  const itemsEl = document.getElementById('ai-items-list');
-  if (itemsEl) {
-    if (!Array.isArray(parsed.items) || parsed.items.length === 0) {
-      itemsEl.innerHTML = '<div style="color:var(--muted);font-size:0.82rem;text-align:center;padding:0.5rem;">No individual items extracted — only the total will be used.</div>';
-    } else {
-      itemsEl.innerHTML = `<table style="width:100%;border-collapse:collapse;font-size:0.82rem;">
-        <thead><tr style="color:var(--muted);font-family:'DM Mono',monospace;font-size:0.7rem;">
-          <th style="text-align:left;padding:0.3rem 0.4rem;border-bottom:1px solid var(--border);">Item</th>
-          <th style="text-align:center;padding:0.3rem;border-bottom:1px solid var(--border);">Qty</th>
-          <th style="text-align:left;padding:0.3rem 0.4rem;border-bottom:1px solid var(--border);">Service</th>
-          <th style="text-align:right;padding:0.3rem 0.4rem;border-bottom:1px solid var(--border);">Unit Price</th>
-          <th style="text-align:right;padding:0.3rem 0.4rem;border-bottom:1px solid var(--border);">Subtotal</th>
-        </tr></thead><tbody>
-        ${parsed.items.map(it => `<tr>
-          <td style="padding:0.35rem 0.4rem;border-bottom:1px solid rgba(45,55,72,0.4);">${escHtml(it.label||'Item')}</td>
-          <td style="padding:0.35rem 0.3rem;border-bottom:1px solid rgba(45,55,72,0.4);text-align:center;font-family:'DM Mono',monospace;">${it.qty||0}</td>
-          <td style="padding:0.35rem 0.4rem;border-bottom:1px solid rgba(45,55,72,0.4);">${it.service==='wash_iron'?'Wash & Iron':'Wash Only'}</td>
-          <td style="padding:0.35rem 0.4rem;border-bottom:1px solid rgba(45,55,72,0.4);text-align:right;font-family:'DM Mono',monospace;color:var(--muted);">${(it.unitPrice||0).toLocaleString()}</td>
-          <td style="padding:0.35rem 0.4rem;border-bottom:1px solid rgba(45,55,72,0.4);text-align:right;font-family:'DM Mono',monospace;color:var(--accent);">${(it.subtotal||0).toLocaleString()}</td>
-        </tr>`).join('')}
-        </tbody></table>`;
-    }
-  }
+  // ── Editable items table ─────────────────────────────────────────
+  _renderEditableItems(parsed.items || []);
 
+  // Notes / warnings
   const notesSection = document.getElementById('ai-notes-section');
   const notesText    = document.getElementById('ai-notes-text');
-  if (notesSection && notesText) {
-    if (parsed.notes && parsed.notes.trim()) {
-      notesText.textContent = parsed.notes;
-      notesSection.style.display = '';
-    } else {
-      notesSection.style.display = 'none';
-    }
+  let allNotes = parsed.notes || '';
+  if (parsed._noCollectionDate || !parsed.collectionDate) {
+    allNotes = ('⚠ No collection date found in invoice — please enter it manually in the "Collection Date" field above. ' + allNotes).trim();
   }
+  if (notesSection && notesText) {
+    if (allNotes) { notesText.textContent = allNotes; notesSection.style.display = ''; }
+    else notesSection.style.display = 'none';
+  }
+}
+
+// Holds the live editable items array
+let _editableItems = [];
+
+function _renderEditableItems(items) {
+  _editableItems = items.map((it, i) => ({ ...it, _id: i }));
+  const container = document.getElementById('ai-items-list');
+  if (!container) return;
+
+  if (_editableItems.length === 0) {
+    container.innerHTML = `<div style="color:var(--muted);font-size:0.82rem;text-align:center;padding:0.8rem;">
+      No items extracted — <button class="btn btn-sm btn-secondary" style="margin-left:0.4rem;" onclick="aiAddItem()">+ Add Item</button>
+    </div>`;
+    return;
+  }
+
+  const svcOpts = `<option value="wash_only">Wash Only</option><option value="wash_iron">Wash & Iron</option>`;
+  const inpStyle = 'background:var(--surface);border:1px solid var(--border);border-radius:6px;padding:0.3rem 0.5rem;color:var(--text);font-family:\'DM Mono\',monospace;font-size:0.78rem;width:100%;outline:none;';
+
+  container.innerHTML = `
+    <div style="overflow-x:auto;">
+    <table style="width:100%;border-collapse:collapse;font-size:0.8rem;min-width:520px;">
+      <thead><tr style="color:var(--muted);font-family:'DM Mono',monospace;font-size:0.68rem;text-transform:uppercase;letter-spacing:0.05em;">
+        <th style="text-align:left;padding:0.4rem 0.5rem;border-bottom:1px solid var(--border);">Item</th>
+        <th style="text-align:center;padding:0.4rem 0.3rem;border-bottom:1px solid var(--border);width:50px;">Qty</th>
+        <th style="text-align:left;padding:0.4rem 0.4rem;border-bottom:1px solid var(--border);width:130px;">Service</th>
+        <th style="text-align:right;padding:0.4rem 0.4rem;border-bottom:1px solid var(--border);width:90px;">Unit Price</th>
+        <th style="text-align:right;padding:0.4rem 0.4rem;border-bottom:1px solid var(--border);width:90px;">Subtotal</th>
+        <th style="padding:0.4rem 0.3rem;border-bottom:1px solid var(--border);width:28px;"></th>
+      </tr></thead>
+      <tbody id="ai-items-tbody">
+      ${_editableItems.map((it, i) => `
+        <tr id="ai-item-row-${i}" style="border-bottom:1px solid rgba(45,55,72,0.35);">
+          <td style="padding:0.35rem 0.4rem;">
+            <input type="text" value="${escHtml(it.label||'')}" style="${inpStyle}" oninput="aiItemChange(${i},'label',this.value)" placeholder="Item name">
+          </td>
+          <td style="padding:0.35rem 0.3rem;">
+            <input type="number" value="${it.qty||0}" min="0" style="${inpStyle}text-align:center;" oninput="aiItemChange(${i},'qty',this.value)">
+          </td>
+          <td style="padding:0.35rem 0.4rem;">
+            <select style="${inpStyle}" onchange="aiItemChange(${i},'service',this.value)">
+              <option value="wash_only" ${it.service==='wash_only'?'selected':''}>Wash Only</option>
+              <option value="wash_iron" ${it.service==='wash_iron'?'selected':''}>Wash & Iron</option>
+            </select>
+          </td>
+          <td style="padding:0.35rem 0.4rem;">
+            <input type="number" value="${it.unitPrice||0}" min="0" style="${inpStyle}text-align:right;" oninput="aiItemChange(${i},'unitPrice',this.value)">
+          </td>
+          <td style="padding:0.35rem 0.4rem;text-align:right;font-family:'DM Mono',monospace;color:var(--accent);" id="ai-item-sub-${i}">
+            ${(it.subtotal||0).toLocaleString()}
+          </td>
+          <td style="padding:0.35rem 0.3rem;text-align:center;">
+            <button onclick="aiRemoveItem(${i})" style="background:none;border:none;color:var(--danger);cursor:pointer;font-size:1rem;line-height:1;padding:0.1rem 0.2rem;" title="Remove">✕</button>
+          </td>
+        </tr>`).join('')}
+      </tbody>
+    </table>
+    </div>
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-top:0.7rem;flex-wrap:wrap;gap:0.5rem;">
+      <button class="btn btn-sm btn-secondary" onclick="aiAddItem()">+ Add Item</button>
+      <div style="font-size:0.78rem;color:var(--muted);">Click any cell to edit &nbsp;·&nbsp; Changes update the total automatically</div>
+    </div>`;
+}
+
+function aiItemChange(idx, field, val) {
+  if (!_editableItems[idx]) return;
+  if (field === 'qty' || field === 'unitPrice') val = parseInt(val) || 0;
+  _editableItems[idx][field] = val;
+  // Recalculate subtotal
+  if (field === 'qty' || field === 'unitPrice') {
+    _editableItems[idx].subtotal = _editableItems[idx].qty * _editableItems[idx].unitPrice;
+    const subEl = document.getElementById('ai-item-sub-' + idx);
+    if (subEl) subEl.textContent = _editableItems[idx].subtotal.toLocaleString();
+  }
+  // Update total field
+  const newTotal = _editableItems.reduce((s, it) => s + (it.subtotal || 0), 0);
+  const totalEl  = document.getElementById('ai-total-amount');
+  if (totalEl && newTotal > 0) totalEl.value = newTotal;
+  // Update overall service type
+  const svcEl = document.getElementById('ai-service-type');
+  if (svcEl) {
+    const hasOnly = _editableItems.some(it => it.service === 'wash_only');
+    const hasIron = _editableItems.some(it => it.service === 'wash_iron');
+    svcEl.value = hasOnly && hasIron ? 'mixed' : hasIron ? 'wash_iron' : 'wash_only';
+  }
+}
+
+function aiAddItem() {
+  _editableItems.push({ label: '', qty: 1, service: 'wash_only', unitPrice: 0, subtotal: 0, _id: Date.now() });
+  _renderEditableItems(_editableItems);
+}
+
+function aiRemoveItem(idx) {
+  _editableItems.splice(idx, 1);
+  _renderEditableItems(_editableItems);
+  // Recalculate total
+  const newTotal = _editableItems.reduce((s, it) => s + (it.subtotal || 0), 0);
+  const totalEl  = document.getElementById('ai-total-amount');
+  if (totalEl && newTotal > 0) totalEl.value = newTotal;
 }
 
 // ══════════════════════════════════════════════════════════════════
@@ -9483,226 +9578,256 @@ function _runRuleParser(text) {
 }
 
 function _ruleExtract(raw) {
-  const lines = raw.split(/\r?\n/).map(l => l.trim()).filter(Boolean);
-  const text  = lines.join('\n');
-  const tl    = text.toLowerCase();
-  const monthNames = ['January','February','March','April','May','June','July','August','September','October','November','December'];
+  const lines    = raw.split(/\r?\n/).map(l => l.trim()).filter(Boolean);
+  const text     = lines.join('\n');
+  const monthNames      = ['January','February','March','April','May','June','July','August','September','October','November','December'];
   const monthNamesShort = ['jan','feb','mar','apr','may','jun','jul','aug','sep','oct','nov','dec'];
   const todayISO = new Date().toISOString().split('T')[0];
-  const notes = [];
+  const notes    = [];
 
-  // ── 1. Customer name ─────────────────────────────────────────────
-  let customerName = '';
-  const custPatterns = [
-    /(?:customer|client|nom|name|pour|for)\s*[:\-–]?\s*(.+)/i,
-    /^(?:mme|m\.|mr|mrs|dr|prof|mme\.)\s+(.+)/im,
-  ];
-  for (const p of custPatterns) {
-    const m = text.match(p);
-    if (m) { customerName = m[1].trim().replace(/[,;].*$/, '').trim(); break; }
-  }
-  // Fallback: first ALL-CAPS line or first line that looks like a name (2+ words, no digits)
-  if (!customerName) {
-    for (const line of lines) {
-      if (/^[A-ZÀÂÄÉÈÊËÎÏÔÖÙÛÜ\s'\-]{4,}$/.test(line) && !/total|invoice|date|facture/i.test(line)) {
-        customerName = line.trim(); break;
-      }
-    }
-  }
-  if (!customerName) {
-    for (const line of lines) {
-      if (/^[A-Za-zÀ-ÿ'\-]{2,}(\s+[A-Za-zÀ-ÿ'\-]{2,})+$/.test(line) && !/total|invoice|date|facture|wash|iron|laundry/i.test(line)) {
-        customerName = line.trim(); break;
-      }
-    }
-  }
-  if (!customerName) notes.push('Could not detect customer name — please fill it in.');
-
-  // ── 2. Dates ──────────────────────────────────────────────────────
+  // ── Helper: parse a date string in any common format ────────────
   function parseDate(str) {
     if (!str) return '';
-    // ISO: 2025-04-15
-    let m = str.match(/(\d{4})[\/\-](\d{1,2})[\/\-](\d{1,2})/);
-    if (m) return m[1] + '-' + m[2].padStart(2,'0') + '-' + m[3].padStart(2,'0');
-    // DD/MM/YYYY or DD-MM-YYYY
-    m = str.match(/(\d{1,2})[\/\-\.](\d{1,2})[\/\-\.](\d{2,4})/);
-    if (m) {
-      const yr = m[3].length === 2 ? '20' + m[3] : m[3];
-      return yr + '-' + m[2].padStart(2,'0') + '-' + m[1].padStart(2,'0');
-    }
-    // "15 April 2025" or "April 15, 2025"
-    m = str.match(/(\d{1,2})\s+([A-Za-z]+)\s+(\d{4})/);
+    str = str.trim();
+    // "21 Apr 2026" / "21 April 2026"
+    let m = str.match(/(\d{1,2})\s+([A-Za-z]+)\s+(\d{4})/);
     if (m) {
       const idx = monthNamesShort.findIndex(mn => m[2].toLowerCase().startsWith(mn));
       if (idx >= 0) return m[3] + '-' + String(idx+1).padStart(2,'0') + '-' + m[1].padStart(2,'0');
     }
+    // "Apr 21 2026" / "April 21, 2026"
     m = str.match(/([A-Za-z]+)\s+(\d{1,2})[,\s]+(\d{4})/);
     if (m) {
       const idx = monthNamesShort.findIndex(mn => m[1].toLowerCase().startsWith(mn));
       if (idx >= 0) return m[3] + '-' + String(idx+1).padStart(2,'0') + '-' + m[2].padStart(2,'0');
     }
+    // ISO 2026-04-21
+    m = str.match(/(\d{4})[\/\-](\d{1,2})[\/\-](\d{1,2})/);
+    if (m) return m[1] + '-' + m[2].padStart(2,'0') + '-' + m[3].padStart(2,'0');
+    // DD/MM/YYYY
+    m = str.match(/(\d{1,2})[\/\-\.](\d{1,2})[\/\-\.](\d{2,4})/);
+    if (m) {
+      const yr = m[3].length === 2 ? '20' + m[3] : m[3];
+      return yr + '-' + m[2].padStart(2,'0') + '-' + m[1].padStart(2,'0');
+    }
     return '';
   }
 
-  let invoiceDate = '';
+  // ── Helper: extract a number from a string ───────────────────────
+  function extractNum(str) {
+    if (!str) return 0;
+    const m = str.match(/[\d,\s]+/);
+    return m ? parseInt(m[0].replace(/[\s,]/g,'')) || 0 : 0;
+  }
+
+  // ── 1. Customer name ─────────────────────────────────────────────
+  // Primary: "Customer's Name: Tessa's Referal"
+  let customerName = '';
+  const custM = text.match(/customer['']?s?\s*name\s*[:\-–]\s*(.+)/i);
+  if (custM) customerName = custM[1].trim();
+  if (!customerName) {
+    // fallback: "Client: ...", "Pour: ...", "Name: ..."
+    const fallback = text.match(/(?:client|pour|for|nom)\s*[:\-–]\s*(.+)/i);
+    if (fallback) customerName = fallback[1].trim();
+  }
+  if (!customerName) notes.push('Customer name not found — please fill it in.');
+
+  // ── 2. Dates ─────────────────────────────────────────────────────
+  // "Date of Collection: 21 Apr 2026"
   let collectionDate = '';
-  const dateLinePatterns = [
-    { re: /(?:invoice\s*date|date\s*facture|date)\s*[:\-–]\s*(.+)/i, field: 'invoice' },
-    { re: /(?:collect(?:ion)?\s*date|reception|received|reçu)\s*[:\-–]\s*(.+)/i, field: 'collection' },
-    { re: /(?:date)\s*[:\-–]\s*(.+)/i, field: 'invoice' },
-  ];
-  for (const { re, field } of dateLinePatterns) {
-    const m = text.match(re);
-    if (m) {
-      const d = parseDate(m[1].trim());
-      if (d) { if (field === 'invoice') invoiceDate = d; else collectionDate = d; }
-    }
+  let invoiceDate    = '';
+  let deliveryDateRaw = '';
+
+  const collM = text.match(/date\s*of\s*collection\s*[:\-–]\s*(.+)/i);
+  if (collM) collectionDate = parseDate(collM[1]);
+
+  // "Expected Delivery: 24 Apr 2026 — 25 Apr 2026"  (take first date)
+  const delivM = text.match(/expected\s*delivery\s*[:\-–]\s*(.+)/i);
+  if (delivM) deliveryDateRaw = delivM[1].split(/[—\-–]/)[0].trim();
+
+  // fallback date labels
+  if (!collectionDate) {
+    const m = text.match(/(?:collect(?:ion)?\s*date|date\s*of\s*pickup|pickup\s*date|received|reçu)\s*[:\-–]\s*(.+)/i);
+    if (m) collectionDate = parseDate(m[1]);
   }
-  // Scan all lines for any date-like string
-  if (!invoiceDate) {
+  if (!collectionDate) {
+    const m = text.match(/(?:invoice\s*date|date\s*facture|^date)\s*[:\-–]\s*(.+)/im);
+    if (m) collectionDate = parseDate(m[1]);
+  }
+  // Scan all lines for any date-like string as last resort
+  if (!collectionDate) {
     for (const line of lines) {
-      const d = parseDate(line);
-      if (d) { invoiceDate = d; break; }
-    }
-  }
-  if (!invoiceDate) { invoiceDate = todayISO; notes.push('No date found — using today.'); }
-  if (!collectionDate) collectionDate = invoiceDate;
-
-  // ── 3. Payment month ─────────────────────────────────────────────
-  let paymentMonth = monthNames[new Date(collectionDate).getMonth()] || monthNames[new Date().getMonth()];
-  const mMatch = text.match(/(?:month|mois|payment\s*month)\s*[:\-–]\s*([A-Za-z]+)/i);
-  if (mMatch) {
-    const found = monthNames.find(mn => mn.toLowerCase().startsWith(mMatch[1].toLowerCase().slice(0,3)));
-    if (found) paymentMonth = found;
-  }
-
-  // ── 4. Items ──────────────────────────────────────────────────────
-  // Patterns: "3 light dresses wash & iron — 2,500 FCFA" or "- 2 trousers: 1500"
-  const items = [];
-  const itemRe = /[-•*]?\s*(\d+)\s*[xX×]?\s*([A-Za-zÀ-ÿ\s'\-\/&()]{3,40?)(?:\s*[\-–:,]\s*|\s+)(?:(wash\s*(?:&|and|et|\+)?\s*iron(?:ing)?|wash\s*only|wash\s*&\s*iron|lavage\s*repassage|lavage\s*seul(?:ement)?)\s*)?(?:[\-–:,]\s*)?(?:@\s*(\d[\d\s,]*))?\s*(?:FCFA|CFA|F|fr)?\s*[:\-–,]?\s*(\d[\d\s,]*)\s*(?:FCFA|CFA|F|fr)?/gi;
-  let m2;
-  while ((m2 = itemRe.exec(text)) !== null) {
-    const qty       = parseInt(m2[1]) || 1;
-    const label     = m2[2].trim().replace(/\s+/g,' ');
-    const svcRaw    = (m2[3] || '').toLowerCase();
-    const unitPrice = m2[4] ? parseInt(m2[4].replace(/[\s,]/g,'')) : 0;
-    const amtRaw    = m2[5] ? parseInt(m2[5].replace(/[\s,]/g,'')) : 0;
-
-    let service = 'wash_only';
-    if (svcRaw.includes('iron') || svcRaw.includes('repass')) service = 'wash_iron';
-
-    const subtotal  = amtRaw || (unitPrice * qty) || 0;
-    const uPrice    = unitPrice || (qty > 0 && subtotal > 0 ? Math.round(subtotal / qty) : 0);
-
-    if (label && subtotal > 0) {
-      items.push({ label, qty, service, unitPrice: uPrice, subtotal });
-    }
-  }
-
-  // Simple fallback item pattern: "3 trousers - 3000" or "shirts x2 2500"
-  if (items.length === 0) {
-    const simple = /(\d+)\s*[xX×]?\s*([A-Za-zÀ-ÿ\s'\-]{3,30})\s*[-–:]\s*(\d[\d\s,]*)\s*(?:FCFA|CFA|F|fr)?/gi;
-    let ms;
-    while ((ms = simple.exec(text)) !== null) {
-      const qty      = parseInt(ms[1]) || 1;
-      const label    = ms[2].trim();
-      const subtotal = parseInt(ms[3].replace(/[\s,]/g,'')) || 0;
-      const svcHint  = tl.includes('iron') || tl.includes('repass') ? 'wash_iron' : 'wash_only';
-      if (label && subtotal > 0 && !/total|date|customer|invoice/i.test(label)) {
-        items.push({ label, qty, service: svcHint, unitPrice: Math.round(subtotal/qty), subtotal });
+      if (/collection|collect|pickup/i.test(line)) {
+        const d = parseDate(line); if (d) { collectionDate = d; break; }
       }
     }
   }
+  if (!collectionDate) {
+    for (const line of lines) {
+      const d = parseDate(line);
+      if (d) { collectionDate = d; break; }
+    }
+  }
+  if (!collectionDate) { collectionDate = todayISO; notes.push('No collection date found — please fill it in.'); }
+  invoiceDate = collectionDate;
 
-  // ── 5. Total ──────────────────────────────────────────────────────
-  let total = 0;
-  const totalRe = /(?:total|montant|amount|somme)\s*[:\-–]?\s*(\d[\d\s,]*)\s*(?:FCFA|CFA|F|fr)?/i;
-  const tm = text.match(totalRe);
-  if (tm) total = parseInt(tm[1].replace(/[\s,]/g,'')) || 0;
-  if (!total && items.length > 0) total = items.reduce((s, it) => s + it.subtotal, 0);
-  // Last resort: biggest standalone number in text
-  if (!total) {
-    const nums = [...text.matchAll(/\b(\d[\d\s,]{2,})\b/g)].map(x => parseInt(x[1].replace(/[\s,]/g,''))).filter(n => n > 100 && n < 10000000);
-    if (nums.length) total = Math.max(...nums);
+  // Payment month from collection date
+  const paymentMonth = monthNames[new Date(collectionDate).getMonth()] || monthNames[new Date().getMonth()];
+
+  // ── 3. Parse items by scanning the block structure ───────────────
+  // The format groups items into blocks separated by "---"
+  // Each block may be preceded by "Service Type: Wash and Iron" / "Wash Only"
+  // Block fields: Item, Color, Type/Style, Unit Price, Number of Dresses/Items, Sub-total
+
+  const items = [];
+  let currentService = 'wash_only'; // default
+
+  // Split into segments by "---" dividers  
+  const segments = text.split(/[-]{3,}/);
+
+  for (const seg of segments) {
+    const sl = seg.toLowerCase();
+
+    // Check if this segment declares a service type
+    const svcM = seg.match(/service\s*type\s*[:\-–]\s*(.+)/i);
+    if (svcM) {
+      const svcRaw = svcM[1].toLowerCase();
+      if (svcRaw.includes('iron')) currentService = 'wash_iron';
+      else if (svcRaw.includes('only') || svcRaw.includes('wash')) currentService = 'wash_only';
+      continue; // no item in a service-type-only segment
+    }
+
+    // Skip totals/summary segments
+    if (/^total\s*number|^parceling|^laundry\s*bag|^for\s*momo|^number\s*:|^name\s*:/im.test(seg.trim())) continue;
+    if (/^total\s*:/im.test(seg.trim()) && !/item/i.test(seg)) continue;
+
+    // Must have an "Item:" line to be an item block
+    const itemM = seg.match(/item\s*[:\-–]\s*(.+)/i);
+    if (!itemM) continue;
+
+    const label     = itemM[1].trim();
+    const colorM    = seg.match(/colou?r\s*[:\-–]\s*(.+)/i);
+    const color     = colorM ? colorM[1].trim() : 'Colored';
+    const typeM     = seg.match(/(?:type|style)\s*[:\-–]\s*(.+)/i);
+    const dressType = typeM ? typeM[1].trim() : null;
+    const unitM     = seg.match(/unit\s*price\s*[:\-–]\s*(.+)/i);
+    const unitPrice = unitM ? extractNum(unitM[1]) : 0;
+    const qtyM      = seg.match(/number\s*of\s*(?:dresses|items|pieces|pcs)\s*[:\-–]\s*(.+)/i);
+    const qty       = qtyM ? extractNum(qtyM[1]) : 1;
+    const subM      = seg.match(/sub[\s\-]*total\s*[:\-–]\s*(.+)/i);
+    const subtotal  = subM ? extractNum(subM[1]) : (unitPrice * qty);
+
+    if (label && qty > 0) {
+      items.push({
+        label: dressType ? label + ' (' + dressType + ')' : label,
+        qty,
+        service: currentService,
+        unitPrice: unitPrice || (qty > 0 && subtotal > 0 ? Math.round(subtotal / qty) : 0),
+        subtotal: subtotal || (unitPrice * qty),
+        color,
+        dressType
+      });
+    }
   }
 
-  // ── 6. Service type ───────────────────────────────────────────────
-  let serviceType = 'wash_only';
-  const hasIron   = /iron|repass/i.test(tl);
-  const hasWash   = /wash|lav/i.test(tl);
+  // ── 4. Total ─────────────────────────────────────────────────────
+  // Match "TOTAL: 4850 FCFA" (exact label at start of line or segment)
+  let total = 0;
+  const totalM = text.match(/^TOTAL\s*[:\-–]\s*(\d[\d\s,]*)\s*(?:FCFA|CFA|F|fr)?/im);
+  if (totalM) total = extractNum(totalM[1]);
+  if (!total) {
+    // any "total" line
+    const anyTotal = text.match(/total\s*[:\-–]\s*(\d[\d\s,]*)\s*(?:FCFA|CFA|F|fr)?/i);
+    if (anyTotal) total = extractNum(anyTotal[1]);
+  }
+  if (!total && items.length > 0) total = items.reduce((s, it) => s + it.subtotal, 0);
+
+  // ── 5. Overall service type ───────────────────────────────────────
   const hasWashOnly = items.some(it => it.service === 'wash_only');
   const hasWashIron = items.some(it => it.service === 'wash_iron');
+  let serviceType = 'wash_only';
   if (hasWashOnly && hasWashIron) serviceType = 'mixed';
-  else if (hasWashIron || (hasIron && hasWash)) serviceType = 'wash_iron';
-  else serviceType = 'wash_only';
+  else if (hasWashIron) serviceType = 'wash_iron';
 
-  return { customerName, invoiceDate, collectionDate, paymentMonth, serviceType, total, items, notes: notes.join(' | ') };
+  return { customerName, invoiceDate, collectionDate, paymentMonth, serviceType, total, items, notes: notes.join(' | '), _noCollectionDate: !collM };
 }
 
 function aiConfirmImport() {
   const customerName = (document.getElementById('ai-customer-name')?.value || '').trim();
   const invoiceDate  = document.getElementById('ai-invoice-date')?.value  || '';
-  const collDate     = document.getElementById('ai-collection-date')?.value || invoiceDate;
+  const collDate     = document.getElementById('ai-collection-date')?.value || '';
   const payMonth     = document.getElementById('ai-payment-month')?.value  || 'January';
   const serviceType  = document.getElementById('ai-service-type')?.value   || 'wash_only';
   const totalAmount  = parseInt(document.getElementById('ai-total-amount')?.value || '0') || 0;
 
-  if (!customerName) { showToast('Customer name is required.', true); return; }
-  if (!invoiceDate)  { showToast('Invoice date is required.', true); return; }
+  if (!customerName)  { showToast('Customer name is required.', true); document.getElementById('ai-customer-name')?.focus(); return; }
+  if (!invoiceDate)   { showToast('Invoice date is required.', true); document.getElementById('ai-invoice-date')?.focus(); return; }
+  if (!collDate)      { showToast('Collection date is required — please enter it.', true); const el = document.getElementById('ai-collection-date'); if(el){el.focus();el.style.border='2px solid var(--danger)';} return; }
   if (totalAmount <= 0) { showToast('Total amount must be greater than zero.', true); return; }
 
-  const parsed = _aiParsedData || {};
-  const invId  = 'inv_ai_' + Date.now() + '_' + Math.random().toString(36).slice(2,5);
-  const finId  = 'fin_ai_' + Date.now() + '_' + Math.random().toString(36).slice(2,5);
-  const delId  = 'del_ai_' + Date.now() + '_' + Math.random().toString(36).slice(2,5);
+  // Use the live editable items
+  const items = (_editableItems || []).filter(it => it.label && it.qty > 0);
 
-  const items = Array.isArray(parsed.items) && parsed.items.length > 0 ? parsed.items : [];
-  let invoiceText = "Washn' Fold — Invoice (AI Import)\nCustomer: " + customerName + '\nDate: ' + invoiceDate + '\n';
+  let invoiceText = "Washn' Fold — Invoice (Imported)\nCustomer: " + customerName + '\nCollection: ' + collDate + '\nDate: ' + invoiceDate + '\n';
   if (items.length > 0) {
     invoiceText += '\nItems:\n';
     items.forEach(it => {
-      invoiceText += '  ' + (it.qty||0) + 'x ' + (it.label||'Item') + ' (' + (it.service==='wash_iron'?'Wash & Iron':'Wash Only') + ') — ' + (it.subtotal||0).toLocaleString() + ' FCFA\n';
+      invoiceText += '  ' + (it.qty||0) + 'x ' + (it.label||'Item') + ' (' + (it.service==='wash_iron'?'Wash & Iron':'Wash Only') + ') @ ' + (it.unitPrice||0).toLocaleString() + ' — ' + (it.subtotal||0).toLocaleString() + ' FCFA\n';
     });
   }
   invoiceText += '\nTotal: ' + totalAmount.toLocaleString() + ' FCFA';
 
+  const invId  = 'inv_ai_' + Date.now() + '_' + Math.random().toString(36).slice(2,5);
+  const finId  = 'fin_ai_' + Date.now() + '_' + Math.random().toString(36).slice(2,5);
+  const delId  = 'del_ai_' + Date.now() + '_' + Math.random().toString(36).slice(2,5);
+
   const preDays  = DB.settings.preDays  || 2;
   const postDays = DB.settings.postDays || 2;
-  const collDateObj   = new Date(collDate);
-  const deliveryDate  = new Date(collDateObj.getTime() + (preDays + postDays) * 86400000).toISOString().split('T')[0];
+  const deliveryDate = new Date(new Date(collDate).getTime() + (preDays + postDays) * 86400000).toISOString().split('T')[0];
 
   DB.invoices.unshift({
-    id: invId, date: invoiceDate, customerName, collectionDate: collDate, deliveryDate,
-    items: items.map(it => ({ label: it.label||'Item', qty: it.qty||0, service: it.service||serviceType, unitPrice: it.unitPrice||0, subtotal: it.subtotal||0, color:'Colored', dressType:null })),
-    total: totalAmount, paymentStatus: 'unpaid', paidAmount: 0, serviceTypes: serviceType,
-    bagCost: 0, bagIncluded: DB.settings.defaultBagIncluded !== false, parcelingIncluded: true,
-    invoiceText, _importedViaAI: true, _importedAt: new Date().toISOString()
+    id: invId, date: invoiceDate, customerName,
+    collectionDate: collDate, deliveryDate,
+    items: items.map(it => ({
+      label: it.label||'Item', qty: it.qty||0,
+      service: it.service||serviceType,
+      unitPrice: it.unitPrice||0, subtotal: it.subtotal||0,
+      color: it.color||'Colored', dressType: it.dressType||null
+    })),
+    total: totalAmount, paymentStatus: 'unpaid', paidAmount: 0,
+    serviceTypes: serviceType, bagCost: 0,
+    bagIncluded: DB.settings.defaultBagIncluded !== false,
+    parcelingIncluded: true, invoiceText,
+    _importedViaAI: true, _importedAt: new Date().toISOString()
   });
   DB.finance.unshift({
-    id: finId, customer: customerName, month: payMonth, amount: totalAmount,
-    paidAmount: 0, status: 'unpaid', paymentMethod: '-',
-    date: collDate || invoiceDate, dateModified: new Date().toISOString().split('T')[0], invoiceId: invId
+    id: finId, customer: customerName, month: payMonth,
+    amount: totalAmount, paidAmount: 0, status: 'unpaid',
+    paymentMethod: '-', date: collDate,
+    dateModified: new Date().toISOString().split('T')[0], invoiceId: invId
   });
   DB.deliveries.unshift({
-    id: delId, invoiceId: invId, customer: customerName, serviceTypes: serviceType,
-    collectionDate: collDate || invoiceDate, expectedDate: deliveryDate, status: 'pending', deliveredDate: null
+    id: delId, invoiceId: invId, customer: customerName,
+    serviceTypes: serviceType, collectionDate: collDate,
+    expectedDate: deliveryDate, status: 'pending', deliveredDate: null
   });
   if (!DB.customerHistory[customerName]) {
-    DB.customerHistory[customerName] = { lastService: serviceType, lastDate: collDate || invoiceDate };
+    DB.customerHistory[customerName] = { lastService: serviceType, lastDate: collDate };
   }
 
   renderAll();
   saveData(true);
-  logActivity('AI Import', 'AI-imported invoice for ' + customerName + ' — ' + totalAmount.toLocaleString() + ' FCFA (' + payMonth + ')');
+  logActivity('AI Import', 'Imported invoice for ' + customerName + ' — ' + totalAmount.toLocaleString() + ' FCFA (' + payMonth + ')');
 
-  document.getElementById('ai-parse-result').style.display = 'none';
+  document.getElementById('ai-parse-result').style.display  = 'none';
   document.getElementById('ai-import-success').style.display = '';
   const st = document.getElementById('ai-success-text');
-  if (st) st.textContent = 'Invoice for ' + customerName + ' (' + totalAmount.toLocaleString() + ' FCFA) has been added to Invoices, Finance, and Deliveries. It is now fully synced across the entire system.';
+  if (st) st.textContent = 'Invoice for ' + customerName + ' (' + totalAmount.toLocaleString() + ' FCFA, ' + items.length + ' item' + (items.length!==1?'s':'') + ') has been added to Invoices, Finance, and Deliveries and is now fully synced.';
 
-  _aiParsedData = null;
+  _aiParsedData  = null;
+  _editableItems = [];
   showToast('✅ Invoice for ' + customerName + ' imported & synced ✓');
-  addNotification('AI Invoice imported: ' + customerName + ' — ' + totalAmount.toLocaleString() + ' FCFA', 'success');
+  addNotification('Invoice imported: ' + customerName + ' — ' + totalAmount.toLocaleString() + ' FCFA', 'success');
 }
 
 // ── Add spin animation if not already present ────────────────────
