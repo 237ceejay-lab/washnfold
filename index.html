@@ -949,7 +949,8 @@ body.mobile-view .card-title-row { flex-direction: column; align-items: flex-sta
         <textarea id="ai-invoice-text" rows="10" placeholder="Example:&#10;Customer: Mme Claire&#10;Date: 15 April 2025&#10;- 3 light dresses wash & iron&#10;- 2 trousers wash only&#10;- 1 shirt wash & iron&#10;Total: 8,750 FCFA" style="resize:vertical;font-family:'DM Mono',monospace;font-size:0.83rem;line-height:1.6;"></textarea>
       </div>
       <div class="btn-row">
-        <button class="btn btn-primary" id="ai-parse-btn" onclick="aiParseInvoice()">🤖 Parse Invoice with AI</button>
+        <button class="btn btn-primary" id="ai-parse-btn" onclick="aiParseInvoice()">🤖 Parse with AI <span style="font-size:0.72rem;opacity:0.75;">(requires API key)</span></button>
+        <button class="btn btn-secondary" id="rule-parse-btn" onclick="ruleParseInvoice()">⚡ Parse Free <span style="font-size:0.72rem;opacity:0.75;">(no key needed)</span></button>
         <button class="btn btn-sm btn-secondary" onclick="document.getElementById('ai-invoice-text').value=''">🗑 Clear</button>
       </div>
     </div>
@@ -9234,12 +9235,14 @@ function aiUpdateKeyStatus() {
 
 function aiResetImport() {
   _aiParsedData = null;
-  ['ai-parse-result','ai-parsing-indicator','ai-import-success'].forEach(id => {
+  ['ai-parse-result','ai-parsing-indicator','ai-import-success','ai-error-box'].forEach(id => {
     const el = document.getElementById(id);
     if (el) el.style.display = 'none';
   });
-  const btn = document.getElementById('ai-parse-btn');
-  if (btn) { btn.disabled = false; btn.textContent = '🤖 Parse Invoice with AI'; }
+  const btn1 = document.getElementById('ai-parse-btn');
+  const btn2 = document.getElementById('rule-parse-btn');
+  if (btn1) { btn1.disabled = false; btn1.textContent = '🤖 Parse with AI'; }
+  if (btn2) { btn2.disabled = false; btn2.textContent = '⚡ Parse Free'; }
   aiUpdateKeyStatus();
 }
 
@@ -9288,14 +9291,26 @@ async function aiParseInvoice() {
 
   function _onDone(responseText, httpStatus) {
     if (indicator) indicator.style.display = 'none';
-    if (btn) { btn.disabled = false; btn.textContent = '🤖 Parse Invoice with AI'; }
+    if (btn) { btn.disabled = false; btn.textContent = '🤖 Parse with AI'; }
 
     if (httpStatus !== 200) {
       let errMsg = 'Server returned status ' + httpStatus;
+      let isBillingError = false;
       try {
         const errData = JSON.parse(responseText);
         errMsg = errData.error?.message || errMsg;
+        if (errMsg.toLowerCase().includes('credit') || errMsg.toLowerCase().includes('billing') || errMsg.toLowerCase().includes('balance')) {
+          isBillingError = true;
+        }
       } catch(_) {}
+
+      // Auto-fallback to free rule-based parser on credit/billing errors
+      if (isBillingError || httpStatus === 402) {
+        showToast('⚡ API credits empty — switching to free parser automatically...', false);
+        setTimeout(() => { _runRuleParser(document.getElementById('ai-invoice-text')?.value || ''); }, 600);
+        return;
+      }
+
       if (httpStatus === 401) errMsg = 'Invalid API key — please check it in the setup section above.';
       else if (httpStatus === 403) errMsg = 'API key does not have permission. Make sure it is an active key.';
       else if (httpStatus === 529 || httpStatus === 503) errMsg = 'Anthropic servers are overloaded. Please try again in a moment.';
@@ -9420,6 +9435,208 @@ function _aiPopulateForm(parsed) {
       notesSection.style.display = 'none';
     }
   }
+}
+
+// ══════════════════════════════════════════════════════════════════
+// FREE RULE-BASED INVOICE PARSER — no API key needed, runs in browser
+// ══════════════════════════════════════════════════════════════════
+
+function ruleParseInvoice() {
+  const text = (document.getElementById('ai-invoice-text')?.value || '').trim();
+  if (!text) { showToast('Please paste an invoice to parse.', true); return; }
+  const indicator = document.getElementById('ai-parsing-indicator');
+  const resultEl  = document.getElementById('ai-parse-result');
+  const successEl = document.getElementById('ai-import-success');
+  const errorBox  = document.getElementById('ai-error-box');
+  const btn       = document.getElementById('rule-parse-btn');
+  if (btn) { btn.disabled = true; btn.textContent = '⏳ Parsing...'; }
+  if (indicator) indicator.style.display = '';
+  if (resultEl)  resultEl.style.display  = 'none';
+  if (successEl) successEl.style.display = 'none';
+  if (errorBox)  errorBox.style.display  = 'none';
+  setTimeout(() => {
+    try {
+      _runRuleParser(text);
+    } catch(e) {
+      if (indicator) indicator.style.display = 'none';
+      if (btn) { btn.disabled = false; btn.textContent = '⚡ Parse Free'; }
+      showToast('Parsing error: ' + e.message, true);
+    }
+  }, 200);
+}
+
+function _runRuleParser(text) {
+  const indicator = document.getElementById('ai-parsing-indicator');
+  const resultEl  = document.getElementById('ai-parse-result');
+  const btn1      = document.getElementById('ai-parse-btn');
+  const btn2      = document.getElementById('rule-parse-btn');
+
+  const parsed = _ruleExtract(text);
+  _aiParsedData = parsed;
+  _aiPopulateForm(parsed);
+
+  if (indicator) indicator.style.display = 'none';
+  if (resultEl)  resultEl.style.display  = '';
+  if (btn1) { btn1.disabled = false; btn1.textContent = '🤖 Parse with AI'; }
+  if (btn2) { btn2.disabled = false; btn2.textContent = '⚡ Parse Free'; }
+  showToast('⚡ Invoice parsed (free mode) — please review the details below.');
+}
+
+function _ruleExtract(raw) {
+  const lines = raw.split(/\r?\n/).map(l => l.trim()).filter(Boolean);
+  const text  = lines.join('\n');
+  const tl    = text.toLowerCase();
+  const monthNames = ['January','February','March','April','May','June','July','August','September','October','November','December'];
+  const monthNamesShort = ['jan','feb','mar','apr','may','jun','jul','aug','sep','oct','nov','dec'];
+  const todayISO = new Date().toISOString().split('T')[0];
+  const notes = [];
+
+  // ── 1. Customer name ─────────────────────────────────────────────
+  let customerName = '';
+  const custPatterns = [
+    /(?:customer|client|nom|name|pour|for)\s*[:\-–]?\s*(.+)/i,
+    /^(?:mme|m\.|mr|mrs|dr|prof|mme\.)\s+(.+)/im,
+  ];
+  for (const p of custPatterns) {
+    const m = text.match(p);
+    if (m) { customerName = m[1].trim().replace(/[,;].*$/, '').trim(); break; }
+  }
+  // Fallback: first ALL-CAPS line or first line that looks like a name (2+ words, no digits)
+  if (!customerName) {
+    for (const line of lines) {
+      if (/^[A-ZÀÂÄÉÈÊËÎÏÔÖÙÛÜ\s'\-]{4,}$/.test(line) && !/total|invoice|date|facture/i.test(line)) {
+        customerName = line.trim(); break;
+      }
+    }
+  }
+  if (!customerName) {
+    for (const line of lines) {
+      if (/^[A-Za-zÀ-ÿ'\-]{2,}(\s+[A-Za-zÀ-ÿ'\-]{2,})+$/.test(line) && !/total|invoice|date|facture|wash|iron|laundry/i.test(line)) {
+        customerName = line.trim(); break;
+      }
+    }
+  }
+  if (!customerName) notes.push('Could not detect customer name — please fill it in.');
+
+  // ── 2. Dates ──────────────────────────────────────────────────────
+  function parseDate(str) {
+    if (!str) return '';
+    // ISO: 2025-04-15
+    let m = str.match(/(\d{4})[\/\-](\d{1,2})[\/\-](\d{1,2})/);
+    if (m) return m[1] + '-' + m[2].padStart(2,'0') + '-' + m[3].padStart(2,'0');
+    // DD/MM/YYYY or DD-MM-YYYY
+    m = str.match(/(\d{1,2})[\/\-\.](\d{1,2})[\/\-\.](\d{2,4})/);
+    if (m) {
+      const yr = m[3].length === 2 ? '20' + m[3] : m[3];
+      return yr + '-' + m[2].padStart(2,'0') + '-' + m[1].padStart(2,'0');
+    }
+    // "15 April 2025" or "April 15, 2025"
+    m = str.match(/(\d{1,2})\s+([A-Za-z]+)\s+(\d{4})/);
+    if (m) {
+      const idx = monthNamesShort.findIndex(mn => m[2].toLowerCase().startsWith(mn));
+      if (idx >= 0) return m[3] + '-' + String(idx+1).padStart(2,'0') + '-' + m[1].padStart(2,'0');
+    }
+    m = str.match(/([A-Za-z]+)\s+(\d{1,2})[,\s]+(\d{4})/);
+    if (m) {
+      const idx = monthNamesShort.findIndex(mn => m[1].toLowerCase().startsWith(mn));
+      if (idx >= 0) return m[3] + '-' + String(idx+1).padStart(2,'0') + '-' + m[2].padStart(2,'0');
+    }
+    return '';
+  }
+
+  let invoiceDate = '';
+  let collectionDate = '';
+  const dateLinePatterns = [
+    { re: /(?:invoice\s*date|date\s*facture|date)\s*[:\-–]\s*(.+)/i, field: 'invoice' },
+    { re: /(?:collect(?:ion)?\s*date|reception|received|reçu)\s*[:\-–]\s*(.+)/i, field: 'collection' },
+    { re: /(?:date)\s*[:\-–]\s*(.+)/i, field: 'invoice' },
+  ];
+  for (const { re, field } of dateLinePatterns) {
+    const m = text.match(re);
+    if (m) {
+      const d = parseDate(m[1].trim());
+      if (d) { if (field === 'invoice') invoiceDate = d; else collectionDate = d; }
+    }
+  }
+  // Scan all lines for any date-like string
+  if (!invoiceDate) {
+    for (const line of lines) {
+      const d = parseDate(line);
+      if (d) { invoiceDate = d; break; }
+    }
+  }
+  if (!invoiceDate) { invoiceDate = todayISO; notes.push('No date found — using today.'); }
+  if (!collectionDate) collectionDate = invoiceDate;
+
+  // ── 3. Payment month ─────────────────────────────────────────────
+  let paymentMonth = monthNames[new Date(collectionDate).getMonth()] || monthNames[new Date().getMonth()];
+  const mMatch = text.match(/(?:month|mois|payment\s*month)\s*[:\-–]\s*([A-Za-z]+)/i);
+  if (mMatch) {
+    const found = monthNames.find(mn => mn.toLowerCase().startsWith(mMatch[1].toLowerCase().slice(0,3)));
+    if (found) paymentMonth = found;
+  }
+
+  // ── 4. Items ──────────────────────────────────────────────────────
+  // Patterns: "3 light dresses wash & iron — 2,500 FCFA" or "- 2 trousers: 1500"
+  const items = [];
+  const itemRe = /[-•*]?\s*(\d+)\s*[xX×]?\s*([A-Za-zÀ-ÿ\s'\-\/&()]{3,40?)(?:\s*[\-–:,]\s*|\s+)(?:(wash\s*(?:&|and|et|\+)?\s*iron(?:ing)?|wash\s*only|wash\s*&\s*iron|lavage\s*repassage|lavage\s*seul(?:ement)?)\s*)?(?:[\-–:,]\s*)?(?:@\s*(\d[\d\s,]*))?\s*(?:FCFA|CFA|F|fr)?\s*[:\-–,]?\s*(\d[\d\s,]*)\s*(?:FCFA|CFA|F|fr)?/gi;
+  let m2;
+  while ((m2 = itemRe.exec(text)) !== null) {
+    const qty       = parseInt(m2[1]) || 1;
+    const label     = m2[2].trim().replace(/\s+/g,' ');
+    const svcRaw    = (m2[3] || '').toLowerCase();
+    const unitPrice = m2[4] ? parseInt(m2[4].replace(/[\s,]/g,'')) : 0;
+    const amtRaw    = m2[5] ? parseInt(m2[5].replace(/[\s,]/g,'')) : 0;
+
+    let service = 'wash_only';
+    if (svcRaw.includes('iron') || svcRaw.includes('repass')) service = 'wash_iron';
+
+    const subtotal  = amtRaw || (unitPrice * qty) || 0;
+    const uPrice    = unitPrice || (qty > 0 && subtotal > 0 ? Math.round(subtotal / qty) : 0);
+
+    if (label && subtotal > 0) {
+      items.push({ label, qty, service, unitPrice: uPrice, subtotal });
+    }
+  }
+
+  // Simple fallback item pattern: "3 trousers - 3000" or "shirts x2 2500"
+  if (items.length === 0) {
+    const simple = /(\d+)\s*[xX×]?\s*([A-Za-zÀ-ÿ\s'\-]{3,30})\s*[-–:]\s*(\d[\d\s,]*)\s*(?:FCFA|CFA|F|fr)?/gi;
+    let ms;
+    while ((ms = simple.exec(text)) !== null) {
+      const qty      = parseInt(ms[1]) || 1;
+      const label    = ms[2].trim();
+      const subtotal = parseInt(ms[3].replace(/[\s,]/g,'')) || 0;
+      const svcHint  = tl.includes('iron') || tl.includes('repass') ? 'wash_iron' : 'wash_only';
+      if (label && subtotal > 0 && !/total|date|customer|invoice/i.test(label)) {
+        items.push({ label, qty, service: svcHint, unitPrice: Math.round(subtotal/qty), subtotal });
+      }
+    }
+  }
+
+  // ── 5. Total ──────────────────────────────────────────────────────
+  let total = 0;
+  const totalRe = /(?:total|montant|amount|somme)\s*[:\-–]?\s*(\d[\d\s,]*)\s*(?:FCFA|CFA|F|fr)?/i;
+  const tm = text.match(totalRe);
+  if (tm) total = parseInt(tm[1].replace(/[\s,]/g,'')) || 0;
+  if (!total && items.length > 0) total = items.reduce((s, it) => s + it.subtotal, 0);
+  // Last resort: biggest standalone number in text
+  if (!total) {
+    const nums = [...text.matchAll(/\b(\d[\d\s,]{2,})\b/g)].map(x => parseInt(x[1].replace(/[\s,]/g,''))).filter(n => n > 100 && n < 10000000);
+    if (nums.length) total = Math.max(...nums);
+  }
+
+  // ── 6. Service type ───────────────────────────────────────────────
+  let serviceType = 'wash_only';
+  const hasIron   = /iron|repass/i.test(tl);
+  const hasWash   = /wash|lav/i.test(tl);
+  const hasWashOnly = items.some(it => it.service === 'wash_only');
+  const hasWashIron = items.some(it => it.service === 'wash_iron');
+  if (hasWashOnly && hasWashIron) serviceType = 'mixed';
+  else if (hasWashIron || (hasIron && hasWash)) serviceType = 'wash_iron';
+  else serviceType = 'wash_only';
+
+  return { customerName, invoiceDate, collectionDate, paymentMonth, serviceType, total, items, notes: notes.join(' | ') };
 }
 
 function aiConfirmImport() {
