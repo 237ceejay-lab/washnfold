@@ -2609,6 +2609,7 @@ async function loadCloudDataAndProceed() {
   setTimeout(() => {
     document.getElementById('login-import-prompt').style.display = 'none';
     document.getElementById('login-form').style.display = 'block';
+    window._appDataReady = true;
     launchApp();
   }, 900);
 }
@@ -2762,6 +2763,7 @@ function mergeLoadedData(loaded) {
 function proceedToApp() {
   document.getElementById('login-import-prompt').style.display = 'none';
   document.getElementById('login-form').style.display = 'block';
+  window._appDataReady = true;
   launchApp();
 }
 
@@ -2775,6 +2777,7 @@ function loginImportAndProceed(input) {
       mergeLoadedData(loaded);
       document.getElementById('login-import-prompt').style.display = 'none';
       document.getElementById('login-form').style.display = 'block';
+      window._appDataReady = true;
       launchApp();
     } catch(err) { input.value = ''; showToast('Import failed: ' + err.message, true); }
   };
@@ -7827,6 +7830,10 @@ function migrateRecord(r) {
 let _autoSaveTimer = null;
 let _autoSaveTimer2 = null;
 function saveData(immediate) {
+  // Guard: never save before real data is loaded — prevents seed-only DB from
+  // overwriting real Firebase data in localStorage during the login flow.
+  if (!window._appDataReady) return;
+
   // Always save to localStorage immediately to prevent data loss on refresh
   try {
     const saveObjLocal = { ...DB, _appVersion: '13.0', _savedAt: new Date().toISOString() };
@@ -10229,8 +10236,9 @@ document.addEventListener('DOMContentLoaded', () => {
         if (e.key === PRESENCE_KEY) _refreshLocalBadge();
       });
       window.addEventListener('beforeunload', function(e) {
-      // Save data synchronously before the page closes/refreshes
-      // This is the critical guard against data loss on refresh
+      // Only persist if real user data has been loaded — prevents an empty/seed
+      // DB from overwriting real data in localStorage on a pre-login refresh.
+      if (!window._appDataReady) return;
       try {
         const saveObj = Object.assign({}, window.DB || {}, {
           _appVersion: '13.0',
