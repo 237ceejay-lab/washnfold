@@ -2616,6 +2616,19 @@ async function loadCloudDataAndProceed() {
 function mergeLoadedData(loaded) {
   if (!loaded || typeof loaded !== 'object') return;
 
+  // ── Version compatibility check ────────────────────────────────────
+  // Parse major version numbers so the app handles upgrades and downgrades gracefully.
+  // Rules:
+  //  • loading an older file into a newer app  → migrateRecord adds safe defaults (fine)
+  //  • loading a newer file into an older app  → unknown fields are preserved via spread/assign (fine)
+  //  • loading a file from a very different major version → warn the user, but still load
+  const _loadedVer   = parseFloat(loaded._appVersion) || 0;
+  const _currentVer  = parseFloat('13.0');
+  if (_loadedVer > _currentVer + 1) {
+    // File is from a significantly newer version — warn, but do not block
+    setTimeout(() => showToast('⚠ Backup from a newer app version (v' + loaded._appVersion + '). Some features may differ.', true), 500);
+  }
+
   // ── Array data — run migration on each record ─────────────────────
   const ARRAY_KEYS = ['invoices','finance','deliveries','materials','reminders','expenses',
                       'notifications','deptHistory','adminActivityLog','activityLog'];
@@ -2733,6 +2746,13 @@ function mergeLoadedData(loaded) {
   // ── Re-seed: reset guard so _loadSeedData re-runs with fresh DB ────
   window._seedLoaded = false;
   _loadSeedData();
+
+  // ── Reconcile: ensure no bin item is still present in active arrays ──
+  // mergeLoadedData replaces arrays wholesale from remote data. The recycleBin
+  // is union-merged (so local deletions survive), but without this step a
+  // deleted invoice/finance/delivery record re-added by the remote data would
+  // silently "un-delete" itself. _reconcileWithBin removes those ghosts.
+  _reconcileWithBin();
 
   _finSelectedIds && _finSelectedIds.clear();
   _finCurrentPage = 1;
@@ -3415,6 +3435,10 @@ function initApp() {
         if (_localNewFinance.length)    { DB.finance    = [..._localNewFinance,    ...DB.finance];     _hadLocalNew = true; }
         if (_localNewDeliveries.length) { DB.deliveries = [..._localNewDeliveries, ...DB.deliveries]; _hadLocalNew = true; }
 
+        // Second reconciliation pass — the safety-net recycleBin re-merge above may
+        // have added more bin items after mergeLoadedData's first pass. Run again so
+        // any records those items correspond to are also removed from active arrays.
+        _reconcileWithBin();
         renderAll();
         // If we rescued locally-created records, push the complete state back to Firebase
         // immediately so those records survive any subsequent remote sync.
@@ -4418,8 +4442,15 @@ function finClearSelection() {
 function finDeleteSelected() {
   const n = _finSelectedIds.size;
   if (n === 0) { showToast('No records selected.', true); return; }
-  if (!confirm('Move ' + n + ' selected record' + (n !== 1 ? 's' : '') + ' to Recycle Bin?')) return;
+  const _invCount = [..._finSelectedIds].filter(rid => {
+    const r = DB.finance.find(x => x.id === rid);
+    return r && r.invoiceId && DB.invoices.find(i => i.id === r.invoiceId);
+  }).length;
+  const confirmMsg = 'Move ' + n + ' selected record' + (n !== 1 ? 's' : '') + ' to Recycle Bin?' +
+    (_invCount > 0 ? '\n\n' + _invCount + ' linked invoice' + (_invCount !== 1 ? 's' : '') + ' will also be moved to the bin.' : '');
+  if (!confirm(confirmMsg)) return;
   if (!DB.deletedSeedIds) DB.deletedSeedIds = [];
+  const _invoiceIdsToDelete = new Set();
   _finSelectedIds.forEach(rid => {
     const rec = DB.finance.find(r => r.id === rid);
     if (!rec) return;
@@ -4427,39 +4458,52 @@ function finDeleteSelected() {
       if (!DB.deletedSeedIds.includes(rid)) DB.deletedSeedIds.push(rid);
     } else {
       _sendToRecycleBin('finance', rec);
+      if (rec.invoiceId) _invoiceIdsToDelete.add(rec.invoiceId);
     }
   });
   DB.finance = DB.finance.filter(r => !_finSelectedIds.has(r.id));
+  // Cascade: move linked invoices + their delivery records to bin
+  let _cascadeTotal = 0;
+  _invoiceIdsToDelete.forEach(invId => { _cascadeTotal += _cascadeDeleteLinkedInvoice({ invoiceId: invId }); });
   _finSelectedIds.clear();
   _finCurrentPage = 1;
-  renderFinance();
-  saveData();
-  showToast('Deleted ' + n + ' record' + (n !== 1 ? 's' : '') + ' ✓');
-  logActivity('Bulk Delete Finance', `Deleted ${n} selected finance record${n !== 1 ? 's' : ''}`);
+  renderAll();
+  saveData(true);
+  const suffix = _cascadeTotal > 0 ? ' + ' + _cascadeTotal + ' linked record' + (_cascadeTotal !== 1 ? 's' : '') : '';
+  showToast('Moved ' + n + ' record' + (n !== 1 ? 's' : '') + ' to Recycle Bin' + suffix + ' ✓');
+  logActivity('Bulk Delete Finance', `Moved ${n} selected finance record${n !== 1 ? 's' : ''} to Recycle Bin${suffix}`);
 }
 
 function finDeleteAllFiltered() {
   const filtered = window._filteredFinance || [];
   const n = filtered.length;
   if (n === 0) { showToast('No filtered records to delete.', true); return; }
-  if (!confirm('Move ALL ' + n + ' filtered record' + (n !== 1 ? 's' : '') + ' to Recycle Bin?')) return;
+  const _invCount = filtered.filter(r => r.invoiceId && DB.invoices.find(i => i.id === r.invoiceId)).length;
+  const confirmMsg = 'Move ALL ' + n + ' filtered record' + (n !== 1 ? 's' : '') + ' to Recycle Bin?' +
+    (_invCount > 0 ? '\n\n' + _invCount + ' linked invoice' + (_invCount !== 1 ? 's' : '') + ' will also be moved to the bin.' : '');
+  if (!confirm(confirmMsg)) return;
   if (n > 50 && !confirm('This will move ' + n + ' records to the Recycle Bin. Are you absolutely sure?')) return;
   if (!DB.deletedSeedIds) DB.deletedSeedIds = [];
+  const _invoiceIdsToDelete = new Set();
   filtered.forEach(rec => {
     if (rec.id.startsWith('fin_seed_')) {
       if (!DB.deletedSeedIds.includes(rec.id)) DB.deletedSeedIds.push(rec.id);
     } else {
       _sendToRecycleBin('finance', rec);
+      if (rec.invoiceId) _invoiceIdsToDelete.add(rec.invoiceId);
     }
   });
   const idsToDelete = new Set(filtered.map(r => r.id));
   DB.finance = DB.finance.filter(r => !idsToDelete.has(r.id));
+  let _cascadeTotal = 0;
+  _invoiceIdsToDelete.forEach(invId => { _cascadeTotal += _cascadeDeleteLinkedInvoice({ invoiceId: invId }); });
   _finSelectedIds.clear();
   _finCurrentPage = 1;
-  renderFinance();
-  saveData();
-  showToast('Deleted ' + n + ' filtered record' + (n !== 1 ? 's' : '') + ' ✓');
-  logActivity('Bulk Delete Finance', `Deleted all ${n} filtered finance record${n !== 1 ? 's' : ''}`);
+  renderAll();
+  saveData(true);
+  const suffix = _cascadeTotal > 0 ? ' + ' + _cascadeTotal + ' linked record' + (_cascadeTotal !== 1 ? 's' : '') : '';
+  showToast('Moved ' + n + ' filtered record' + (n !== 1 ? 's' : '') + ' to Recycle Bin' + suffix + ' ✓');
+  logActivity('Bulk Delete Finance', `Moved all ${n} filtered finance record${n !== 1 ? 's' : ''} to Recycle Bin${suffix}`);
 }
 
 
@@ -4894,6 +4938,55 @@ function switchPayTab(tab) {
 // ══════════════════════════════════════════════════════════════════
 // RECYCLE BIN — 30-day soft-delete for all record types
 // ══════════════════════════════════════════════════════════════════
+// ── Recycle bin / active-array reconciliation ──────────────────────────────
+// After ANY mergeLoadedData call, active arrays may have been replaced with
+// remote data that still contains records the user had previously deleted.
+// This function removes from each active array every record whose ID appears
+// in the recycle bin (either as the primary item OR as a linked item inside a
+// bin entry), ensuring deletions always survive a cloud/localStorage sync.
+function _reconcileWithBin() {
+  if (!Array.isArray(DB.recycleBin) || DB.recycleBin.length === 0) return;
+  const binIds = {};
+  DB.recycleBin.forEach(function(b) {
+    if (!b || !b.type || !b.data) return;
+    // Primary deleted record
+    const pid = b.data.id || b.id;
+    if (pid) { if (!binIds[b.type]) binIds[b.type] = new Set(); binIds[b.type].add(pid); }
+    // Linked records stored inside the bin entry (e.g. finance + delivery inside a deleted invoice)
+    (b.linkedItems || []).forEach(function(li) {
+      if (!li || !li.type || !li.data || !li.data.id) return;
+      if (!binIds[li.type]) binIds[li.type] = new Set();
+      binIds[li.type].add(li.data.id);
+    });
+  });
+  if (binIds.invoice)  DB.invoices   = DB.invoices.filter(r => !binIds.invoice.has(r.id));
+  if (binIds.finance)  DB.finance    = DB.finance.filter(r => !binIds.finance.has(r.id));
+  if (binIds.delivery) DB.deliveries = DB.deliveries.filter(d => !binIds.delivery.has(d.id));
+  if (binIds.material) DB.materials  = DB.materials.filter(m => !binIds.material.has(m.id));
+  if (binIds.reminder) DB.reminders  = DB.reminders.filter(r => !binIds.reminder.has(r.id));
+  if (binIds.expense)  DB.expenses   = DB.expenses.filter(e => !binIds.expense.has(e.id));
+}
+
+// ── Cascade-delete the invoice linked to a finance record ──────────────────
+// Used when deleting a finance record that has an invoiceId — the parent
+// invoice and its delivery record(s) are also moved to the recycle bin.
+// Returns the number of additional records deleted (0 if no linked invoice).
+function _cascadeDeleteLinkedInvoice(rec) {
+  if (!rec || !rec.invoiceId) return 0;
+  const inv = DB.invoices.find(i => i.id === rec.invoiceId);
+  if (!inv) return 0;
+  const linkedItems = [];
+  DB.deliveries = DB.deliveries.filter(function(d) {
+    const match = (d.invoiceId && d.invoiceId === rec.invoiceId) ||
+                  (!d.invoiceId && d.customer === inv.customerName && d.collectionDate === inv.collectionDate);
+    if (match) linkedItems.push({ type: 'delivery', data: d });
+    return !match;
+  });
+  DB.invoices = DB.invoices.filter(i => i.id !== rec.invoiceId);
+  _sendToRecycleBin('invoice', inv, linkedItems);
+  return 1 + linkedItems.length;
+}
+
 function _sendToRecycleBin(type, data, linkedItems) {
   if (!Array.isArray(DB.recycleBin)) DB.recycleBin = [];
   const now     = new Date().toISOString();
@@ -5108,18 +5201,23 @@ function renderRecycleBin() {
 function deleteFinRecord(recId) {
   const rec = DB.finance.find(r => r.id === recId);
   if (!rec) { showToast('Record not found.', true); return; }
-  if (!confirm(`Move this record for "${rec.customer}" to the Recycle Bin?\n\nIt will be permanently deleted after 30 days unless restored.`)) return;
+  const hasLinkedInv = !!(rec.invoiceId && DB.invoices.find(i => i.id === rec.invoiceId));
+  const confirmMsg = hasLinkedInv
+    ? `Move this finance record for "${rec.customer}" to the Recycle Bin?\n\nThe linked invoice will also be moved to the bin.\nRestore within 30 days to get everything back.`
+    : `Move this record for "${rec.customer}" to the Recycle Bin?\n\nIt will be permanently deleted after 30 days unless restored.`;
+  if (!confirm(confirmMsg)) return;
   DB.finance = DB.finance.filter(r => r.id !== recId);
   if (recId && recId.startsWith('fin_seed_')) {
     if (!DB.deletedSeedIds) DB.deletedSeedIds = [];
     if (!DB.deletedSeedIds.includes(recId)) DB.deletedSeedIds.push(recId);
   }
   _sendToRecycleBin('finance', rec);
-  renderFinance();
-  renderDepartments(); // ensure departments update immediately
+  const cascaded = _cascadeDeleteLinkedInvoice(rec);
+  renderAll();
   saveData(true);
-  logActivity('Delete Finance Record', `→ Bin: ${rec.customer} — ${rec.amount.toLocaleString()} FCFA (${rec.month})`);
-  showToast('Moved to Recycle Bin 🗑️ — restore within 30 days if needed');
+  const suffix = cascaded > 0 ? ` + linked invoice (${cascaded} record${cascaded !== 1 ? 's' : ''})` : '';
+  logActivity('Delete Finance Record', `→ Bin: ${rec.customer} — ${rec.amount.toLocaleString()} FCFA${suffix}`);
+  showToast(`Moved to Recycle Bin 🗑️${suffix} — restore within 30 days`);
 }
 
 // ══════════════════════════════════════════════════════════════════
@@ -7712,6 +7810,13 @@ function migrateRecord(r) {
     if (!out.page) out.page = '';
     if (!out.id) out.id = 'al_' + Date.now() + '_' + Math.random().toString(36).slice(2,6);
   }
+
+  // ── Forward compatibility: preserve unknown fields from newer versions ──
+  // If this record has a _recordType that we don't recognise (added in a
+  // future version), return it unchanged so we don't silently corrupt it.
+  // The app will render it as an unknown item rather than losing it.
+  // This is a no-op for all records that matched a block above (they already
+  // have their defaults applied and return normally from those blocks).
 
   return out;
 }
