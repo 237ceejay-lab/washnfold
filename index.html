@@ -2517,33 +2517,57 @@ async function loadCloudDataAndProceed() {
   }
 
   let rawData = null;
+  let _fbRawData = null;
+  let _lsRawData = null;
 
   // Try cloud first (unless we already know it's blocked)
   if (!window._firebaseBlocked && window._fbGetData) {
     if (msgEl) msgEl.textContent = 'Loading session from cloud...';
-    try {
-      rawData = await window._fbGetData();
-    } catch(e) {
-      /* silent */;
-    }
+    try { _fbRawData = await window._fbGetData(); } catch(e) { /* silent */ }
   }
 
-  // Always try localStorage as fallback
-  if (!rawData) {
+  // Always load localStorage too (needed for timestamp comparison below)
+  try { _lsRawData = localStorage.getItem('washnfold_db'); } catch(e) {}
+
+  // Choose the NEWER source by comparing _savedAt timestamps.
+  // This is the critical fix: if the Firebase write on the previous logout was
+  // abandoned before completing (page reloaded too fast), Firebase has stale data
+  // while localStorage has the correct latest state. Always using cloud unconditionally
+  // would silently revert the session's work.
+  if (_fbRawData && _lsRawData) {
     try {
-      const local = localStorage.getItem('washnfold_db');
-      if (local) {
-        rawData = local;
-        if (msgEl) msgEl.textContent = window._firebaseBlocked
-          ? '✓ Data loaded from device storage'
-          : 'Cloud unavailable — loaded from local cache...';
+      const _fbSavedAt = JSON.parse(_fbRawData)._savedAt || '';
+      const _lsSavedAt = JSON.parse(_lsRawData)._savedAt || '';
+      if (_lsSavedAt > _fbSavedAt) {
+        rawData = _lsRawData;
+        if (msgEl) msgEl.textContent = '✓ Loaded from local storage (cloud is behind — will sync now)';
+        // Push the newer local data to Firebase immediately so it catches up
+        if (window._fbSetData && !window._firebaseBlocked) {
+          window._fbSetData(_lsRawData).catch(() => {});
+        }
+      } else {
+        rawData = _fbRawData;
+        if (msgEl) msgEl.textContent = '✓ Data loaded from cloud';
       }
-    } catch(e) {}
+    } catch(e) { rawData = _fbRawData || _lsRawData; }
+  } else if (_fbRawData) {
+    rawData = _fbRawData;
+    if (msgEl) msgEl.textContent = '✓ Data loaded from cloud';
+  } else if (_lsRawData) {
+    rawData = _lsRawData;
+    if (msgEl) msgEl.textContent = window._firebaseBlocked
+      ? '✓ Data loaded from device storage'
+      : 'Cloud unavailable — loaded from local cache...';
   }
 
   if (rawData) {
     try {
       const loaded = JSON.parse(rawData);
+      // Record the _savedAt of the data we just loaded.
+      // The onSnapshot listener uses this to skip any Firebase snapshot that is
+      // older than what we loaded here — prevents stale cloud data from overwriting
+      // a newer local state immediately after login.
+      window._loginDataSavedAt = loaded._savedAt || null;
       // Before cloud merge: preserve locally-saved deletedSeedIds so cloud data
       // cannot resurrect records the user deleted between cloud sync cycles
       let _localDeletedSeeds = [];
@@ -2783,17 +2807,23 @@ function confirmLogout(isAuto) {
       }
     } catch(_e) { /* log save failed — logout still proceeds */ }
 
-    // ── Step 3: Fire Firebase save in background — logout does NOT wait ──
-    if (window._fbSetData && !window._firebaseBlocked) {
-      try { window._fbSetData(jsonStr); } catch(_e) {}
-    }
-
   } catch(_e) { /* even if everything above fails, we still logout */ }
 
-  // ── Step 4: Always proceed to doLogout after a short delay ──
-  // The delay just lets the "Saving..." button state show briefly.
+  // ── Step 3 + 4: Await Firebase save (up to 5s), then logout ──
+  // Critical: we MUST await the Firebase write. If we reload the page before the
+  // async Firebase set() resolves, the Firestore write is abandoned mid-flight and
+  // Firebase ends up with the previous session's data. On next login the stale cloud
+  // data would win over localStorage, reverting all changes since the last save.
   showToast('Logging out ✓');
-  setTimeout(doLogout, 500);
+  if (window._fbSetData && !window._firebaseBlocked) {
+    try {
+      const _saveDone    = window._fbSetData(jsonStr).catch(() => {});
+      const _saveTimeout = new Promise(r => setTimeout(r, 5000));
+      Promise.race([_saveDone, _saveTimeout]).then(doLogout);
+    } catch(_e) { setTimeout(doLogout, 400); }
+  } else {
+    setTimeout(doLogout, 400);
+  }
 }
 
 // ── EmailJS helpers ─────────────────────────────────────────────────
@@ -3103,6 +3133,7 @@ function doLogout() {
   currentAccountUsername = '';
   currentAdminAccountId = null;
   _lastRemoteUpdate = null;
+  window._loginDataSavedAt = null;
 
   // Write a logout flag so the reloaded page shows login screen immediately
   try { sessionStorage.setItem('washnfold_just_logged_out', '1'); } catch(e) {}
@@ -3296,6 +3327,12 @@ function initApp() {
       // (gives a 4-second grace window to avoid re-loading our own writes)
       const updateAge = Date.now() - new Date(updatedAt).getTime();
       if (updateAge < 4000) return; // too fresh — probably our own write
+      // Skip if Firebase snapshot is older than the data we loaded at login.
+      // This blocks the common case where: (1) logout Firebase write was abandoned
+      // mid-flight, (2) login loaded the correct newer state from localStorage,
+      // (3) the first onSnapshot fires with the stale Firebase version and would
+      // otherwise overwrite the correctly restored state.
+      if (window._loginDataSavedAt && updatedAt && updatedAt < window._loginDataSavedAt) return;
       try {
         const loaded = JSON.parse(payload);
         // Preserve everything that must NOT be overwritten by a remote sync:
@@ -7704,10 +7741,13 @@ function saveData(immediate) {
 
 async function _doCloudSave() {
   try {
+    const _nowISO = new Date().toISOString();
+    // Keep _loginDataSavedAt current so the onSnapshot guard never blocks our own writes
+    window._loginDataSavedAt = _nowISO;
     const saveObj = {
       ...DB,
       _appVersion: '13.0',
-      _savedAt: new Date().toISOString(),
+      _savedAt: _nowISO,
       deletedSeedIds: DB.deletedSeedIds || [],
       settings: { ...DB.settings },
       // Always include recycleBin explicitly — never omit so remote syncs can merge correctly
