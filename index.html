@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Washn' Fold — Management System V12</title>
+<title>Washn' Fold — Management System V13</title>
 
 <!-- Fonts: try Google Fonts first, fall back to system fonts gracefully on blocked networks -->
 <!-- Fonts loaded non-blocking — page renders instantly even if fonts.googleapis.com
@@ -604,7 +604,7 @@ body.mobile-view .card-title-row { flex-direction: column; align-items: flex-sta
   <div class="login-box">
     <div style="font-family:'DM Mono',monospace;font-size:0.7rem;letter-spacing:0.3em;color:var(--accent);margin-bottom:0.5rem;">✦ WASHN' FOLD</div>
     <h1>Management</h1>
-    <p class="sub">Laundry Service Software v12.0</p>
+    <p class="sub">Laundry Service Software v13.0</p>
     <div id="login-form">
       <div class="form-group" style="margin-bottom:1rem;text-align:left;">
         <label>Username</label>
@@ -2748,7 +2748,7 @@ function confirmLogout(isAuto) {
   try {
     const saveObj = {
       ...DB,
-      _appVersion: '12.0',
+      _appVersion: '13.0',
       _savedAt: new Date().toISOString(),
       deletedSeedIds: DB.deletedSeedIds || [],
       settings: { ...DB.settings },
@@ -2775,7 +2775,7 @@ function confirmLogout(isAuto) {
           DB.settings.lastDailyLogDate = new Date().toISOString();
           _saveLogToDownloadsFolder();
           localStorage.setItem('washnfold_db', JSON.stringify({
-            ...DB, _appVersion: '12.0', _savedAt: new Date().toISOString(),
+            ...DB, _appVersion: '13.0', _savedAt: new Date().toISOString(),
             deletedSeedIds: DB.deletedSeedIds || [],
             settings: { ...DB.settings }, recycleBin: DB.recycleBin || []
           }));
@@ -2817,7 +2817,7 @@ function initEmailJS() {
 function buildFullBackupBlob() {
   const saveObj = {
     ...DB,
-    _appVersion: '12.0',
+    _appVersion: '13.0',
     _savedAt: new Date().toISOString(),
     _type: 'full_backup'
   };
@@ -3904,7 +3904,7 @@ function generateInvoice() {
     document.getElementById('inv-step-2').style.display = 'block';
     addNotification(`Invoice updated for ${currentInvoiceCustomer} — ${grand.toLocaleString()} FCFA`, 'info');
     showToast('Invoice updated ✓');
-    if (currentAccountType === 'admin') logAdminActivity('Edit Invoice', `Updated invoice for ${currentInvoiceCustomer} — ${grand.toLocaleString()} FCFA`);
+    logActivity('Invoice Updated', `Updated invoice for ${currentInvoiceCustomer} — ${grand.toLocaleString()} FCFA`, 'invoices');
 
   } else {
     // ── NEW INVOICE MODE ───────────────────────────────────────────
@@ -3929,8 +3929,7 @@ function generateInvoice() {
     document.getElementById('inv-step-1').style.display = 'none';
     document.getElementById('inv-step-2').style.display = 'block';
     addNotification(`Invoice created for ${customerName} — ${grand.toLocaleString()} FCFA`, 'success');
-    logActivity('Invoice Created', `Invoice for ${customerName}, Total: ${grand.toLocaleString()} FCFA`); showToast('Invoice saved ✓');
-    if (currentAccountType === 'admin') logAdminActivity('New Invoice', `Created invoice for ${customerName} — ${grand.toLocaleString()} FCFA`);
+    logActivity('Invoice Created', `Invoice for ${customerName}, Total: ${grand.toLocaleString()} FCFA`, 'invoices'); showToast('Invoice saved ✓');
   }
 
   renderAll();
@@ -4108,7 +4107,7 @@ function toggleInvoiceSent(id) {
   renderInvoicesList();
   saveData();
   showToast(inv.sent ? `Invoice for ${inv.customerName} marked as Sent ✓` : `Invoice for ${inv.customerName} marked as Unsent`);
-  if (currentAccountType === 'admin') logAdminActivity('Toggle Invoice Sent', `Invoice for ${inv.customerName} (${inv.total.toLocaleString()} FCFA) marked as ${inv.sent ? 'Sent' : 'Unsent'}`);
+  logActivity('Invoice Sent Status', `Invoice for ${inv.customerName} (${inv.total.toLocaleString()} FCFA) marked as ${inv.sent ? 'Sent' : 'Unsent'}`, 'invoices');
 }
 
 function filterInvoices() { renderInvoicesList(); }
@@ -4492,7 +4491,7 @@ function addManualFinRecord() {
   renderOverview();
   saveData(true); // immediate save
   showToast('Financial record added for ' + customer + ' \u2713');
-  if (currentAccountType === 'admin') logAdminActivity('Manual Finance', customer + ' — ' + amount.toLocaleString() + ' FCFA');
+  logActivity('Manual Finance', `${customer} — ${amount.toLocaleString()} FCFA`, 'finance');
 }
 
 // ── Customer statement autocomplete ──────────────────────────────
@@ -4836,7 +4835,7 @@ function confirmReversePayment() {
   saveData(true);
   showToast(`Payment of ${oldPaid.toLocaleString()} FCFA reversed ✓`);
   addNotification(`${rec.customer} payment reversed (was ${oldPaid.toLocaleString()} FCFA)${reason ? ' — ' + reason : ''}`, 'info');
-  if (currentAccountType === 'admin') logAdminActivity('Reverse Payment', `${rec.customer} — reversed ${oldPaid.toLocaleString()} FCFA${reason ? ' (' + reason + ')' : ''}`);
+  logActivity('Reverse Payment', `${rec.customer} — reversed ${oldPaid.toLocaleString()} FCFA${reason ? ' (' + reason + ')' : ''}`, 'finance');
 }
 
 function switchPayTab(tab) {
@@ -5115,7 +5114,7 @@ function _saveLogToDownloadsFolder() {
   const filename = 'WashnFold_Log_' + ts.slice(0,10) + '_' + String(now.getHours()).padStart(2,'0') + 'h' + String(now.getMinutes()).padStart(2,'0') + '.json';
   const logData = {
     _type: 'app_log_backup',
-    _appVersion: '12.0',
+    _appVersion: '13.0',
     _savedAt: ts,
     _savedBy: currentAccountUsername || 'system',
     _savedByType: currentAccountType || 'unknown',
@@ -5467,6 +5466,7 @@ function importExcel(input) {
 
       renderFinance();
       renderOverview();
+      logActivity('CSV Import', `Imported ${imported} finance records from CSV (${skipped} skipped as duplicates)`, 'finance');
       saveData();
       showToast('Imported ' + imported + ' records (' + skipped + ' skipped as duplicates) \u2713');
     } catch (err) { input.value = ''; showToast('Import failed: ' + err.message, true); }
@@ -5769,7 +5769,7 @@ function addReminder() {
   renderReminders();
   saveData();
   showToast('Reminder added ✓');
-  if (currentAccountType === 'admin') logAdminActivity('Add Reminder', `Added reminder: "${title}" (${type}, ${priority} priority)`);
+  logActivity('Add Reminder', `Added reminder: "${title}" (${type}, ${priority} priority)`, 'planner');
 }
 
 function renderReminders() {
@@ -5911,6 +5911,7 @@ function exportExpensesPDF() {
   doc.setFontSize(7); doc.setTextColor(180,185,195); doc.setFont('helvetica','normal');
   doc.text("Washn' Fold Laundry Services  —  Confidential Business Document", pageW/2, 287, {align:'center'});
   doc.save(`WashnFold_Expenses_${new Date().toISOString().split('T')[0]}.pdf`);
+  logActivity('Export', `Expenses PDF downloaded (${DB.expenses.length} records)`, 'expenses');
   showToast('Expenses PDF downloaded ✓');
 }
 
@@ -5929,6 +5930,7 @@ function exportExpensesXLSX() {
   ws['!cols'] = [{wch:14},{wch:32},{wch:16},{wch:16}];
   XLSX.utils.book_append_sheet(wb, ws, 'Expenses');
   XLSX.writeFile(wb, `WashnFold_Expenses_${new Date().toISOString().split('T')[0]}.xlsx`);
+  logActivity('Export', `Expenses Excel downloaded (${DB.expenses.length} records)`, 'expenses');
   showToast('Expenses Excel downloaded ✓');
 }
 
@@ -6257,6 +6259,7 @@ function generateReport() {
   const text = lines.join('\n');
   document.getElementById('report-text').textContent = text;
   document.getElementById('report-output-card').style.display = 'block';
+  logActivity('Report Generated', label, 'reports');
   showToast('Report generated ✓');
 }
 
@@ -6459,6 +6462,7 @@ function downloadReportPDF() {
 
   drawPageFooter();
   doc.save(`WashnFold_Report_${new Date().toISOString().split('T')[0]}.pdf`);
+  logActivity('Report Downloaded', (window._reportLabel || 'Business Report') + ' — PDF', 'reports');
   showToast('Report PDF downloaded ✓');
 }
 
@@ -6488,6 +6492,7 @@ function saveWelcomeMessage() {
   const val = document.getElementById('set-welcome-msg')?.value || '';
   if (!val.trim()) { showToast('Welcome message cannot be empty.', true); return; }
   DB.settings.welcomeMessage = val.trim();
+  logActivity('Settings', 'Welcome message updated', 'settings');
   saveData();
   const lbl = document.getElementById('welcome-msg-preview-label');
   if (lbl) { lbl.textContent = '✓ Saved!'; setTimeout(() => { lbl.textContent = ''; }, 2000); }
@@ -6499,6 +6504,7 @@ function resetWelcomeMessage() {
   DB.settings.welcomeMessage = def;
   const el = document.getElementById('set-welcome-msg');
   if (el) el.value = def;
+  logActivity('Settings', 'Welcome message reset to default', 'settings');
   saveData();
   showToast('Welcome message reset to default ✓');
 }
@@ -6508,7 +6514,6 @@ function renderAuditLog() {
   if (!container) return;
   const search = (document.getElementById('audit-search')?.value || '').toLowerCase();
   const acctFilter = document.getElementById('audit-acct-filter')?.value || '';
-  // Use unified log — show all accounts
   let log = [...(DB.activityLog || [])];
   log.sort((a,b) => new Date(b.timestamp) - new Date(a.timestamp));
   if (acctFilter) log = log.filter(e => e.accountType === acctFilter);
@@ -6518,19 +6523,41 @@ function renderAuditLog() {
     return;
   }
   const actionColors = { 'New Invoice':'var(--accent2)', 'Invoice Created':'var(--accent2)', 'Delete Invoice':'var(--danger)', 'Invoice Deleted':'var(--danger)', 'Delivery':'var(--success)', 'Add Material':'var(--purple)', 'Material Added':'var(--purple)', 'Manual Finance':'var(--info)', 'Payment Recorded':'var(--success)', 'Expense Added':'var(--accent3)', 'Login':'var(--info)', 'Logout':'var(--muted)', 'AI Import':'var(--accent)', 'default':'var(--muted)' };
-  container.innerHTML = log.slice(0, 500).map((e, i) => {
-    const color = actionColors[e.action] || actionColors['default'];
-    const ts = new Date(e.timestamp);
-    const timeStr = ts.toLocaleDateString('en-GB', {day:'2-digit',month:'short',year:'numeric'}) + ' ' + ts.toLocaleTimeString([],{hour:'2-digit',minute:'2-digit'});
-    const acctBadge = e.accountType === 'superuser' ? '👑' : e.accountType === 'manager' ? '👤' : '🔧';
-    return `<div style="display:flex;align-items:flex-start;gap:0.8rem;padding:0.65rem 0.5rem;border-bottom:1px solid rgba(45,55,72,0.4);">
-      <span style="background:${color}22;border:1px solid ${color}55;color:${color};border-radius:6px;padding:0.15rem 0.55rem;font-family:'DM Mono',monospace;font-size:0.65rem;white-space:nowrap;margin-top:0.1rem;">${escHtml(e.action)}</span>
-      <div style="flex:1;min-width:0;">
-        <div style="font-size:0.83rem;color:var(--text);word-break:break-word;">${escHtml(e.detail)}</div>
-        <div style="font-size:0.68rem;color:var(--muted);font-family:'DM Mono',monospace;margin-top:0.2rem;">🕐 ${timeStr} &nbsp; ${acctBadge} ${escHtml(e.username||'')}</div>
-      </div>
+  const todayStr = new Date().toISOString().split('T')[0];
+  const yestDate = new Date(); yestDate.setDate(yestDate.getDate() - 1);
+  const yesterdayStr = yestDate.toISOString().split('T')[0];
+  const grouped = new Map();
+  log.slice(0, 500).forEach(e => {
+    const dk = (e.timestamp || '').split('T')[0];
+    if (!grouped.has(dk)) grouped.set(dk, []);
+    grouped.get(dk).push(e);
+  });
+  let html = '';
+  grouped.forEach((entries, dk) => {
+    let label;
+    if (dk === todayStr) label = 'Today';
+    else if (dk === yesterdayStr) label = 'Yesterday';
+    else { const d = new Date(dk + 'T00:00:00'); label = d.toLocaleDateString('en-GB', {day:'2-digit',month:'short',year:'numeric'}); }
+    const cnt = entries.length;
+    html += `<div style="display:flex;align-items:center;gap:0.6rem;padding:0.5rem 0.5rem 0.3rem;margin-top:0.4rem;border-bottom:2px solid rgba(232,197,71,0.25);">
+      <span style="font-size:0.82rem;font-weight:700;color:var(--text);">${label}</span>
+      <span style="background:rgba(232,197,71,0.15);border:1px solid rgba(232,197,71,0.35);color:var(--accent);border-radius:20px;padding:0.05rem 0.55rem;font-size:0.68rem;font-family:'DM Mono',monospace;">${cnt} ${cnt === 1 ? 'activity' : 'activities'}</span>
     </div>`;
-  }).join('');
+    entries.forEach(e => {
+      const color = actionColors[e.action] || actionColors['default'];
+      const ts = new Date(e.timestamp);
+      const timeStr = ts.toLocaleTimeString([], {hour:'2-digit', minute:'2-digit'});
+      const acctBadge = e.accountType === 'superuser' ? '👑' : e.accountType === 'manager' ? '👤' : '🔧';
+      html += `<div style="display:flex;align-items:flex-start;gap:0.8rem;padding:0.65rem 0.5rem;border-bottom:1px solid rgba(45,55,72,0.4);">
+        <span style="background:${color}22;border:1px solid ${color}55;color:${color};border-radius:6px;padding:0.15rem 0.55rem;font-family:'DM Mono',monospace;font-size:0.65rem;white-space:nowrap;margin-top:0.1rem;">${escHtml(e.action)}</span>
+        <div style="flex:1;min-width:0;">
+          <div style="font-size:0.83rem;color:var(--text);word-break:break-word;">${escHtml(e.detail)}</div>
+          <div style="font-size:0.68rem;color:var(--muted);font-family:'DM Mono',monospace;margin-top:0.2rem;">🕐 ${timeStr} &nbsp; ${acctBadge} ${escHtml(e.username||'')}</div>
+        </div>
+      </div>`;
+    });
+  });
+  container.innerHTML = html;
 }
 
 function clearAuditLog() {
@@ -6548,10 +6575,14 @@ function changeUsername() {
   if (!newUser) { showToast('Enter a new username.', true); return; }
   if (pass !== DB.credentials.password) { showToast('Incorrect password.', true); return; }
   if (newUser.length < 3) { showToast('Username must be at least 3 characters.', true); return; }
+  const oldUsername = currentAccountUsername;
   DB.credentials.username = newUser;
+  currentAccountUsername = newUser;
   document.getElementById('set-current-user').value = newUser;
   document.getElementById('set-new-user').value = '';
   document.getElementById('set-user-pass').value = '';
+  logActivity('Username Changed', `Username changed from "${oldUsername}" to "${newUser}"`, 'settings');
+  saveData(true);
   showToast('Username updated ✓');
 }
 
@@ -7059,7 +7090,6 @@ function renderSuAuditLog() {
   if (!el) return;
   const search = (document.getElementById('su-audit-search')?.value || '').toLowerCase();
   const acctFilter = document.getElementById('su-audit-account')?.value || '';
-  // Use unified activityLog only — legacy adminActivityLog was causing incorrect username display
   let combined = [...(DB.activityLog || [])];
   combined.sort((a,b)=> new Date(b.timestamp)-new Date(a.timestamp));
   let filtered = combined.filter(entry => {
@@ -7075,18 +7105,40 @@ function renderSuAuditLog() {
     el.innerHTML = '<div class="empty-state"><div class="icon">📋</div><div>No activity recorded yet.</div></div>';
     return;
   }
-  el.innerHTML = filtered.slice(0,500).map(entry => {
-    const ts = new Date(entry.timestamp).toLocaleString('en-GB',{day:'2-digit',month:'short',hour:'2-digit',minute:'2-digit'});
-    const typeBadge = entry.accountType === 'superuser'
-      ? `<span class="badge badge-yellow" style="font-size:0.58rem;">👑 Super</span>`
-      : entry.accountType === 'manager'
-      ? `<span class="badge badge-blue" style="font-size:0.58rem;">👑 Manager</span>`
-      : `<span class="badge badge-green" style="font-size:0.58rem;">🔧 ${escHtml(entry.accountType||'user')}</span>`;
-    return `<div class="activity-item">
-      <div><b>${escHtml(entry.action||'')}</b> — ${escHtml(entry.detail||'')} ${typeBadge} <span style="font-size:0.68rem;color:var(--accent);font-family:'DM Mono',monospace;">${escHtml(entry.username||'?')}</span></div>
-      <div class="act-time">${ts}</div>
+  const todayStr = new Date().toISOString().split('T')[0];
+  const yestDate = new Date(); yestDate.setDate(yestDate.getDate() - 1);
+  const yesterdayStr = yestDate.toISOString().split('T')[0];
+  const grouped = new Map();
+  filtered.slice(0, 500).forEach(entry => {
+    const dk = (entry.timestamp || '').split('T')[0];
+    if (!grouped.has(dk)) grouped.set(dk, []);
+    grouped.get(dk).push(entry);
+  });
+  let html = '';
+  grouped.forEach((entries, dk) => {
+    let label;
+    if (dk === todayStr) label = 'Today';
+    else if (dk === yesterdayStr) label = 'Yesterday';
+    else { const d = new Date(dk + 'T00:00:00'); label = d.toLocaleDateString('en-GB', {day:'2-digit',month:'short',year:'numeric'}); }
+    const cnt = entries.length;
+    html += `<div style="display:flex;align-items:center;gap:0.6rem;padding:0.5rem 0.5rem 0.3rem;margin-top:0.4rem;border-bottom:2px solid rgba(232,197,71,0.25);">
+      <span style="font-size:0.82rem;font-weight:700;color:var(--text);">${label}</span>
+      <span style="background:rgba(232,197,71,0.15);border:1px solid rgba(232,197,71,0.35);color:var(--accent);border-radius:20px;padding:0.05rem 0.55rem;font-size:0.68rem;font-family:'DM Mono',monospace;">${cnt} ${cnt === 1 ? 'activity' : 'activities'}</span>
     </div>`;
-  }).join('');
+    entries.forEach(entry => {
+      const ts = new Date(entry.timestamp).toLocaleString('en-GB',{day:'2-digit',month:'short',hour:'2-digit',minute:'2-digit'});
+      const typeBadge = entry.accountType === 'superuser'
+        ? `<span class="badge badge-yellow" style="font-size:0.58rem;">👑 Super</span>`
+        : entry.accountType === 'manager'
+        ? `<span class="badge badge-blue" style="font-size:0.58rem;">👑 Manager</span>`
+        : `<span class="badge badge-green" style="font-size:0.58rem;">🔧 ${escHtml(entry.accountType||'user')}</span>`;
+      html += `<div class="activity-item">
+        <div><b>${escHtml(entry.action||'')}</b> — ${escHtml(entry.detail||'')} ${typeBadge} <span style="font-size:0.68rem;color:var(--accent);font-family:'DM Mono',monospace;">${escHtml(entry.username||'?')}</span></div>
+        <div class="act-time">${ts}</div>
+      </div>`;
+    });
+  });
+  el.innerHTML = html;
 }
 
 function exportAuditLogJSON() {
@@ -7096,6 +7148,7 @@ function exportAuditLogJSON() {
   a.href = URL.createObjectURL(blob);
   a.download = `WashnFold_AuditLog_${new Date().toISOString().split('T')[0]}.json`;
   a.click();
+  logActivity('Export', `Audit log exported (${(DB.activityLog||[]).length} entries)`, 'settings');
   showToast('Audit log exported ✓');
 }
 
@@ -7304,6 +7357,7 @@ function exportDeptHistoryXLSX() {
   ws['!cols'] = [{wch:22},{wch:16},{wch:22},{wch:14},{wch:16}];
   XLSX.utils.book_append_sheet(wb, ws, 'DeptHistory');
   XLSX.writeFile(wb, `WashnFold_DeptHistory_${new Date().toISOString().split('T')[0]}.xlsx`);
+  logActivity('Export', `Department history Excel downloaded (${DB.deptHistory.length} records)`, 'departments');
   showToast('Department history Excel downloaded ✓');
 }
 
@@ -7338,6 +7392,7 @@ function exportDeptHistoryPDF() {
     doc.setDrawColor(200,205,215); doc.setLineWidth(0.2); doc.line(margin,y,margin+contentW,y); y+=2;
   });
   doc.save(`WashnFold_DeptHistory_${new Date().toISOString().split('T')[0]}.pdf`);
+  logActivity('Export', `Department history PDF downloaded (${DB.deptHistory.length} records)`, 'departments');
   showToast('Department history PDF downloaded ✓');
 }
 
@@ -7361,6 +7416,7 @@ function exportMaterialsXLSX() {
   ws['!cols'] = [{wch:22},{wch:16},{wch:16},{wch:10},{wch:10},{wch:30}];
   XLSX.utils.book_append_sheet(wb, ws, 'Materials');
   XLSX.writeFile(wb, `WashnFold_Materials_${new Date().toISOString().split('T')[0]}.xlsx`);
+  logActivity('Export', `Materials Excel downloaded (${DB.materials.length} items)`, 'materials');
   showToast('Materials Excel downloaded ✓');
 }
 
@@ -7396,6 +7452,7 @@ function exportMaterialsPDF() {
     doc.setDrawColor(200,205,215); doc.setLineWidth(0.2); doc.line(margin,y,margin+contentW,y); y+=2;
   });
   doc.save(`WashnFold_Materials_${new Date().toISOString().split('T')[0]}.pdf`);
+  logActivity('Export', `Materials PDF downloaded (${DB.materials.length} items)`, 'materials');
   showToast('Materials PDF downloaded ✓');
 }
 
@@ -7432,7 +7489,7 @@ function logAdminActivity(action, detail) {
 function saveAdminDataPackage() {
   const pkg = {
     _type: 'admin_data_package',
-    _appVersion: '12.0',
+    _appVersion: '13.0',
     _exportedAt: new Date().toISOString(),
     _adminUser: DB.adminCredentials.username,
     // All data arrays — complete snapshot
@@ -7509,6 +7566,8 @@ function importAdminData(input) {
 
       requestAnimationFrame(() => {
         renderAll();
+        const _importSummary = `Inv:${stats.inv} Fin:${stats.fin} Del:${stats.del} Mat:${stats.mat} Exp:${stats.exp} Rem:${stats.rem} Dept:${stats.dept}`;
+        logActivity('Admin Import', `Admin data package imported — ${_importSummary}`, 'settings');
         showToast(
           `Admin data synced ✓ — Invoices:${stats.inv} Finance:${stats.fin} Deliveries:${stats.del} ` +
           `Materials:${stats.mat} Expenses:${stats.exp} Reminders:${stats.rem} Dept:${stats.dept} (new/updated)`
@@ -7628,7 +7687,7 @@ let _autoSaveTimer2 = null;
 function saveData(immediate) {
   // Always save to localStorage immediately to prevent data loss on refresh
   try {
-    const saveObjLocal = { ...DB, _appVersion: '12.0', _savedAt: new Date().toISOString() };
+    const saveObjLocal = { ...DB, _appVersion: '13.0', _savedAt: new Date().toISOString() };
     localStorage.setItem('washnfold_db', JSON.stringify(saveObjLocal));
   } catch(e) { /* silent */; }
 
@@ -7647,7 +7706,7 @@ async function _doCloudSave() {
   try {
     const saveObj = {
       ...DB,
-      _appVersion: '12.0',
+      _appVersion: '13.0',
       _savedAt: new Date().toISOString(),
       deletedSeedIds: DB.deletedSeedIds || [],
       settings: { ...DB.settings },
@@ -7677,7 +7736,7 @@ async function _doCloudSave() {
 }
 
 function exportDataBackup() {
-  const saveObj = { ...DB, _appVersion: '12.0', _savedAt: new Date().toISOString(),
+  const saveObj = { ...DB, _appVersion: '13.0', _savedAt: new Date().toISOString(),
     _schema: { invoiceFields: ['id','date','customerName','collectionDate','deliveryDate','items','total','paymentStatus','paidAmount','serviceTypes','invoiceText'],
                financeFields: ['id','customer','month','amount','paidAmount','status','paymentMethod','date','invoiceId'],
                deliveryFields: ['id','invoiceId','customer','serviceTypes','collectionDate','expectedDate','status','deliveredDate'] } };
@@ -7687,6 +7746,7 @@ function exportDataBackup() {
   const dateStr = new Date().toISOString().split('T')[0];
   a.download = `WashnFold_Backup_${dateStr}.json`;
   a.click();
+  logActivity('Data Backup', `Full data backup downloaded (v13.0)`, 'settings');
   showToast('Backup downloaded ✓');
 }
 
@@ -7703,6 +7763,7 @@ function loadDataFile(input) {
         renderAll();
         saveData();
         const ver = loaded._appVersion ? ' (v' + loaded._appVersion + ')' : ' (legacy file)';
+        logActivity('Data Restore', `Data file loaded and applied${ver}`, 'settings');
         showToast('Data loaded & applied ✓' + ver);
       });
     } catch (err) { input.value = ''; showToast('Failed to load data file: ' + err.message, true); }
@@ -8009,6 +8070,7 @@ function downloadPDF() {
 
   const safeName = (custName && custName !== '\u2014\u2014') ? custName.replace(/[^a-zA-Z0-9 '_-]/g,'').trim() : 'Customer';
   doc.save(safeName+' - Invoice.pdf');
+  logActivity('Invoice PDF', `Downloaded invoice PDF for ${custName}`, 'invoices');
   showToast('PDF downloaded \u2713');
 }
 
@@ -8090,6 +8152,7 @@ function exportInvoicesXLSX(exportAll = false) {
   ws['!cols'] = [{wch:5},{wch:14},{wch:20},{wch:16},{wch:16},{wch:14},{wch:14},{wch:14},{wch:12},{wch:8}];
   XLSX.utils.book_append_sheet(wb, ws, 'Invoices');
   XLSX.writeFile(wb, `WashnFold_Invoices_${label}_${new Date().toISOString().split('T')[0]}.xlsx`);
+  logActivity('Export', `Invoices Excel (${label}) downloaded — ${data.length} records`, 'invoices');
   showToast(`Invoices Excel (${label}) downloaded ✓`);
 }
 
@@ -8107,6 +8170,7 @@ function exportDeliveryXLSX(exportAll = false) {
   ws['!cols'] = [{wch:5},{wch:20},{wch:14},{wch:16},{wch:18},{wch:12},{wch:16},{wch:12}];
   XLSX.utils.book_append_sheet(wb, ws, 'Deliveries');
   XLSX.writeFile(wb, `WashnFold_Deliveries_${label}_${new Date().toISOString().split('T')[0]}.xlsx`);
+  logActivity('Export', `Deliveries Excel (${label}) downloaded — ${data.length} records`, 'deliveries');
   showToast(`Delivery Excel (${label}) downloaded ✓`);
 }
 
@@ -8199,6 +8263,7 @@ function exportDeliveryPDF() {
 
   y += 4; footer();
   doc.save('WashnFold_Active_Deliveries_' + new Date().toISOString().split('T')[0] + '.pdf');
+  logActivity('Export', `Active deliveries PDF downloaded (${active.length} records)`, 'deliveries');
   showToast('Delivery PDF downloaded ✓');
 }
 
@@ -8286,6 +8351,7 @@ function exportDeptLivePDF(dept) {
 
   y += 6; footer2();
   doc.save('WashnFold_' + dept.toUpperCase() + '_Dept_' + new Date().toISOString().split('T')[0] + '.pdf');
+  logActivity('Export', `${deptName} department PDF downloaded (${items.length} items)`, 'departments');
   showToast(deptName + ' PDF downloaded ✓');
 }
 
@@ -10022,7 +10088,7 @@ document.addEventListener('DOMContentLoaded', () => {
       // This is the critical guard against data loss on refresh
       try {
         const saveObj = Object.assign({}, window.DB || {}, {
-          _appVersion: '12.0',
+          _appVersion: '13.0',
           _savedAt: new Date().toISOString(),
           deletedSeedIds: (window.DB && window.DB.deletedSeedIds) ? window.DB.deletedSeedIds : [],
           settings:       window.DB ? { ...window.DB.settings } : {},
