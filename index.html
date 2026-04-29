@@ -2477,7 +2477,15 @@ function launchApp() {
     document.body.classList.add('logged-in');
     initApp();
   }, 2000);
-  window.addEventListener('online',  _updateConnectionBadge);
+  window.addEventListener('online', function() {
+    _updateConnectionBadge();
+    // Connection restored — immediately push latest data to Firebase so other
+    // devices can access changes made while this device was offline.
+    if (window._appDataReady && currentAccountUsername) {
+      window._firebaseBlocked = false; // allow Firebase writes now that we're back online
+      saveData(true);
+    }
+  });
   window.addEventListener('offline', _updateConnectionBadge);
 }
 
@@ -2531,35 +2539,71 @@ async function loadCloudDataAndProceed() {
   // Always load localStorage too (needed for timestamp comparison below)
   try { _lsRawData = localStorage.getItem('washnfold_db'); } catch(e) {}
 
-  // Choose the NEWER source by comparing _savedAt timestamps.
-  // This is the critical fix: if the Firebase write on the previous logout was
-  // abandoned before completing (page reloaded too fast), Firebase has stale data
-  // while localStorage has the correct latest state. Always using cloud unconditionally
-  // would silently revert the session's work.
+  // ── Source selection + union merge ──────────────────────────────────────────
+  // Strategy: use the NEWER source as the base, then inject any records that
+  // exist only in the OLDER source. This ensures we never lose data created on
+  // another device, while still respecting the most recent state for conflicts.
+  // The merged result is written back to BOTH sources so they stay in sync.
   if (_fbRawData && _lsRawData) {
     try {
-      const _fbSavedAt = JSON.parse(_fbRawData)._savedAt || '';
-      const _lsSavedAt = JSON.parse(_lsRawData)._savedAt || '';
-      if (_lsSavedAt > _fbSavedAt) {
-        rawData = _lsRawData;
-        if (msgEl) msgEl.textContent = '✓ Loaded from local storage (cloud is behind — will sync now)';
-        // Push the newer local data to Firebase immediately so it catches up
-        if (window._fbSetData && !window._firebaseBlocked) {
-          window._fbSetData(_lsRawData).catch(() => {});
-        }
-      } else {
-        rawData = _fbRawData;
-        if (msgEl) msgEl.textContent = '✓ Data loaded from cloud';
+      const _fbParsed  = JSON.parse(_fbRawData);
+      const _lsParsed  = JSON.parse(_lsRawData);
+      const _fbSavedAt = _fbParsed._savedAt || '';
+      const _lsSavedAt = _lsParsed._savedAt || '';
+
+      // localStorage wins on tie — it is always the most recently written on this device
+      const _lsIsNewer = _lsSavedAt >= _fbSavedAt;
+      const _base  = _lsIsNewer ? _lsParsed  : _fbParsed;
+      const _other = _lsIsNewer ? _fbParsed  : _lsParsed;
+
+      // Union-merge the data arrays: bring across any records missing from the base.
+      // _reconcileWithBin (called inside mergeLoadedData) will remove any records
+      // that belong in the bin, so it is safe to inject extras here.
+      const _MERGE_KEYS = ['invoices','finance','deliveries','materials','expenses','reminders','recycleBin'];
+      _MERGE_KEYS.forEach(function(key) {
+        if (!Array.isArray(_base[key]) || !Array.isArray(_other[key])) return;
+        const _baseIds = new Set(_base[key].map(function(r) { return r && r.id; }).filter(Boolean));
+        const _extras  = _other[key].filter(function(r) { return r && r.id && !_baseIds.has(r.id); });
+        if (_extras.length > 0) _base[key] = _base[key].concat(_extras);
+      });
+      // Union-merge activityLog (keyed on timestamp instead of id)
+      if (Array.isArray(_base.activityLog) && Array.isArray(_other.activityLog)) {
+        const _baseTimes = new Set(_base.activityLog.map(function(e) { return e && e.timestamp; }).filter(Boolean));
+        const _extraLogs = _other.activityLog.filter(function(e) { return e && e.timestamp && !_baseTimes.has(e.timestamp); });
+        if (_extraLogs.length > 0) _base.activityLog = _base.activityLog.concat(_extraLogs);
+      }
+      // Merge deletedSeedIds so deletions made on either device are preserved
+      if (Array.isArray(_other.deletedSeedIds)) {
+        if (!Array.isArray(_base.deletedSeedIds)) _base.deletedSeedIds = [];
+        _other.deletedSeedIds.forEach(function(id) { if (!_base.deletedSeedIds.includes(id)) _base.deletedSeedIds.push(id); });
+      }
+
+      _base._savedAt = new Date().toISOString(); // mark merged state
+      rawData = JSON.stringify(_base);
+      if (msgEl) msgEl.textContent = _lsIsNewer
+        ? '✓ Data merged and synced (local + cloud)'
+        : '✓ Data merged and synced (cloud + local)';
+
+      // Write merged result back to both sources so they are identical going forward
+      try { localStorage.setItem('washnfold_db', rawData); } catch(_) {}
+      if (window._fbSetData && !window._firebaseBlocked) {
+        window._fbSetData(rawData).catch(() => {});
       }
     } catch(e) { rawData = _fbRawData || _lsRawData; }
   } else if (_fbRawData) {
     rawData = _fbRawData;
+    // Cache in localStorage so future sessions have a local copy
+    try { localStorage.setItem('washnfold_db', rawData); } catch(_) {}
     if (msgEl) msgEl.textContent = '✓ Data loaded from cloud';
   } else if (_lsRawData) {
     rawData = _lsRawData;
+    // Push to Firebase now so other devices can access it
+    if (window._fbSetData && !window._firebaseBlocked) {
+      window._fbSetData(rawData).catch(() => {});
+    }
     if (msgEl) msgEl.textContent = window._firebaseBlocked
       ? '✓ Data loaded from device storage'
-      : 'Cloud unavailable — loaded from local cache...';
+      : '✓ Data loaded from device storage (syncing to cloud)';
   }
 
   if (rawData) {
@@ -2750,7 +2794,12 @@ function mergeLoadedData(loaded) {
   }
   if (Array.isArray(loaded.deletedSeedIds)) DB.deletedSeedIds = loaded.deletedSeedIds;
 
-  // ── Re-seed: reset guard so _loadSeedData re-runs with fresh DB ────
+  // ── Re-seed: only add seed records that are genuinely absent ────────
+  // We do NOT re-seed if the loaded data already contains real records
+  // (finance.length > 0 means a prior session already seeded or the user
+  // created records). This prevents new seed entries added in a code update
+  // from silently appearing in existing installs. Seed records carry ids
+  // like "fin_seed_N" so they can be individually tracked/deleted.
   window._seedLoaded = false;
   _loadSeedData();
 
@@ -3384,11 +3433,11 @@ function initApp() {
     }
   });
 
-  // ── Periodic auto-save every 30 seconds (belt-and-suspenders guard) ──
+  // ── Periodic auto-save every 15 seconds ──
   if (window._periodicSaveTimer) clearInterval(window._periodicSaveTimer);
   window._periodicSaveTimer = setInterval(function() {
     if (currentAccountUsername) saveData(); // debounced cloud save
-  }, 30000);
+  }, 15000);
 
   // ── Listen for remote data changes (another user saved something) ──
   if (window._fbListenData) {
