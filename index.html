@@ -685,7 +685,7 @@ body.mobile-view .card-title-row { flex-direction: column; align-items: flex-sta
         🔔<span class="notif-badge" id="notif-count">0</span>
       </div>
       <span id="autosave-indicator" style="font-family:'DM Mono',monospace;font-size:0.68rem;color:var(--success);opacity:0;transition:opacity 1.2s;">✓ Saved</span>
-      <span id="online-users-badge" title="Users currently logged in" style="display:none;background:rgba(81,207,102,0.1);border:1px solid rgba(81,207,102,0.3);border-radius:20px;padding:0.25rem 0.6rem;font-size:0.68rem;color:var(--success);font-family:'DM Mono',monospace;cursor:default;">🟢 1 online</span>
+      <span id="conn-status-badge" title="Internet connection status" style="display:none;border-radius:20px;padding:0.25rem 0.6rem;font-size:0.68rem;font-family:'DM Mono',monospace;cursor:default;"></span>
       <button class="btn btn-sm btn-danger" onclick="confirmLogout()" id="logout-btn">🔒 Logout</button>
     </div>
   </header>
@@ -1322,10 +1322,10 @@ body.mobile-view .card-title-row { flex-direction: column; align-items: flex-sta
       <div id="due-lookup-result"></div>
     </div>
     <div class="card">
-      <div class="card-title">▸ Delivered Laundries (Recent)</div>
+      <div class="card-title">▸ Delivered Laundries</div>
       <div class="tbl-wrap">
         <table class="data-table">
-          <thead><tr><th>Customer</th><th>Collected</th><th>Delivered</th><th>Days Taken</th></tr></thead>
+          <thead><tr><th>Customer</th><th>Service</th><th>Collected</th><th>Delivered</th><th>Days Taken</th></tr></thead>
           <tbody id="delivered-tbody"></tbody>
         </table>
       </div>
@@ -2477,6 +2477,8 @@ function launchApp() {
     document.body.classList.add('logged-in');
     initApp();
   }, 2000);
+  window.addEventListener('online',  _updateConnectionBadge);
+  window.addEventListener('offline', _updateConnectionBadge);
 }
 
 function showOfflineBanner() {
@@ -2784,13 +2786,60 @@ function loginImportAndProceed(input) {
   reader.readAsText(file);
 }
 
+function _offlineLogoutModal() {
+  // Prompt user to download backup before logging out when offline/local-mode
+  const existing = document.getElementById('offline-logout-modal');
+  if (existing) existing.remove();
+  const overlay = document.createElement('div');
+  overlay.id = 'offline-logout-modal';
+  overlay.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.7);z-index:99999;display:flex;align-items:center;justify-content:center;padding:1rem;';
+  const isOffline = !navigator.onLine;
+  const title  = isOffline ? '🔴 You Are Offline' : '🟡 Cloud Sync Unavailable';
+  const detail = isOffline
+    ? 'Your internet connection is down. Any activities since your last cloud sync have only been saved locally on this device.'
+    : 'Cloud sync is unavailable on this network (local mode). Your data is saved on this device only.';
+  overlay.innerHTML = `
+    <div style="background:var(--surface);border:1px solid rgba(255,107,107,0.4);border-radius:14px;padding:1.8rem;max-width:420px;width:100%;font-family:'DM Sans',sans-serif;">
+      <div style="font-size:1.1rem;font-weight:700;margin-bottom:0.6rem;color:var(--danger);">${title}</div>
+      <p style="font-size:0.85rem;color:var(--muted);margin-bottom:1rem;">${detail}</p>
+      <p style="font-size:0.85rem;color:var(--text);margin-bottom:1.4rem;"><b>Recommendation:</b> Download a data backup now. On your next login, import the file — it will automatically sync all your offline activities online.</p>
+      <div style="display:flex;flex-direction:column;gap:0.6rem;">
+        <button onclick="_offlineLogoutDownloadAndLogout()" style="background:rgba(81,207,102,0.15);border:1px solid rgba(81,207,102,0.4);color:var(--success);border-radius:8px;padding:0.6rem 1rem;font-family:'DM Mono',monospace;font-size:0.8rem;cursor:pointer;font-weight:600;">📥 Download Backup &amp; Logout</button>
+        <button onclick="document.getElementById('offline-logout-modal').remove();confirmLogout._skipOfflineCheck=true;confirmLogout();" style="background:rgba(255,107,107,0.1);border:1px solid rgba(255,107,107,0.3);color:var(--danger);border-radius:8px;padding:0.6rem 1rem;font-family:'DM Mono',monospace;font-size:0.8rem;cursor:pointer;">Logout Without Backup</button>
+        <button onclick="document.getElementById('offline-logout-modal').remove();" style="background:rgba(255,255,255,0.05);border:1px solid rgba(255,255,255,0.1);color:var(--muted);border-radius:8px;padding:0.6rem 1rem;font-family:'DM Mono',monospace;font-size:0.8rem;cursor:pointer;">Cancel</button>
+      </div>
+    </div>`;
+  document.body.appendChild(overlay);
+}
+
+function _offlineLogoutDownloadAndLogout() {
+  document.getElementById('offline-logout-modal')?.remove();
+  // Trigger the log/backup download
+  try { _saveLogToDownloadsFolder(); } catch(e) {}
+  try { exportAuditLogJSON(); } catch(e) {}
+  // Small delay so download initiates, then proceed with logout
+  setTimeout(function() {
+    confirmLogout._skipOfflineCheck = true;
+    confirmLogout();
+  }, 600);
+}
+
 function confirmLogout(isAuto) {
   if (!isAuto && !confirm('Are you sure you want to log out?')) return;
+  // If offline/local-mode and not already bypassed, show warning modal
+  if (!isAuto && !confirmLogout._skipOfflineCheck && (!navigator.onLine || window._firebaseBlocked)) {
+    confirmLogout._skipOfflineCheck = false;
+    _offlineLogoutModal();
+    return;
+  }
+  confirmLogout._skipOfflineCheck = false;
   logActivity('Logout', isAuto ? 'Auto-logout due to inactivity' : 'Manual logout');
 
   const btn = document.getElementById('logout-btn');
   if (btn) { btn.textContent = '⏳ Saving...'; btn.disabled = true; }
 
+  // Build save object OUTSIDE try so jsonStr is accessible for Firebase save below
+  let jsonStr = '';
   // ── Step 1: Synchronous localStorage save (instant, never fails) ──
   try {
     const saveObj = {
@@ -2801,7 +2850,7 @@ function confirmLogout(isAuto) {
       settings: { ...DB.settings },
       recycleBin: DB.recycleBin || []
     };
-    const jsonStr = JSON.stringify(saveObj);
+    jsonStr = JSON.stringify(saveObj);
     localStorage.setItem('washnfold_db', jsonStr);
 
     // ── Step 2: In-app log save (best-effort, must never block logout) ──
@@ -2837,8 +2886,9 @@ function confirmLogout(isAuto) {
   // async Firebase set() resolves, the Firestore write is abandoned mid-flight and
   // Firebase ends up with the previous session's data. On next login the stale cloud
   // data would win over localStorage, reverting all changes since the last save.
+  // ── Firebase save now correctly uses jsonStr defined above ──
   showToast('Logging out ✓');
-  if (window._fbSetData && !window._firebaseBlocked) {
+  if (window._fbSetData && !window._firebaseBlocked && jsonStr) {
     try {
       const _saveDone    = window._fbSetData(jsonStr).catch(() => {});
       const _saveTimeout = new Promise(r => setTimeout(r, 5000));
@@ -3150,7 +3200,7 @@ function doLogout() {
   if (prog) { prog.style.transition = 'none'; prog.style.width = '0%'; }
   const btn = document.getElementById('logout-btn');
   if (btn) { btn.textContent = '🔒 Logout'; btn.disabled = false; }
-  const badge = document.getElementById('online-users-badge');
+  const badge = document.getElementById('conn-status-badge');
   if (badge) badge.style.display = 'none';
   currentAccountType = 'manager';
   currentAccountUsername = '';
@@ -3202,36 +3252,35 @@ function _mergeAndUpdatePresence(firebaseSessions) {
       }
     });
   } catch(e) {}
-  _updatePresenceBadge(merged);
+  _updateConnectionBadge();
 }
 
-// ── Presence badge updater — always shows, even with 0 other users ───────────
-function _updatePresenceBadge(otherSessions) {
-  const badge = document.getElementById('online-users-badge');
+// ── Connection status badge — shows online/offline/local-mode ────────────
+function _updateConnectionBadge() {
+  const badge = document.getElementById('conn-status-badge');
   if (!badge) return;
-  const others = (otherSessions || []).length;
-  const total  = others + 1; // +1 = yourself
-
-  // Always visible once logged in
+  if (!currentAccountUsername) { badge.style.display = 'none'; return; }
   badge.style.display = '';
-
-  if (others === 0) {
-    // Only you online
-    badge.textContent = '🟢 1 online (you)';
-    badge.title = 'You are the only one logged in right now';
+  const online = navigator.onLine;
+  const cloudOk = online && !window._firebaseBlocked;
+  if (cloudOk) {
+    badge.textContent = '🟢 Online';
+    badge.title = 'Connected — activities are recorded online';
     badge.style.background  = 'rgba(81,207,102,0.1)';
-    badge.style.borderColor = 'rgba(81,207,102,0.3)';
+    badge.style.border      = '1px solid rgba(81,207,102,0.3)';
     badge.style.color       = 'var(--success)';
+  } else if (online && window._firebaseBlocked) {
+    badge.textContent = '🟡 Local Mode';
+    badge.title = 'Internet connected but cloud sync unavailable on this network. Data is saved locally only.';
+    badge.style.background  = 'rgba(232,197,71,0.1)';
+    badge.style.border      = '1px solid rgba(232,197,71,0.4)';
+    badge.style.color       = 'var(--accent)';
   } else {
-    // You + others
-    const names = otherSessions.map(function(s) {
-      return s.username + ' (' + (s.accountType || 'user') + ')';
-    }).join(', ');
-    badge.textContent = '🟢 ' + total + ' online';
-    badge.title       = 'Also online: ' + names + ' (You are also counted)';
-    badge.style.background  = 'rgba(78,205,196,0.12)';
-    badge.style.borderColor = 'rgba(78,205,196,0.4)';
-    badge.style.color       = 'var(--accent2)';
+    badge.textContent = '🔴 Offline';
+    badge.title = 'No internet connection — activities are NOT recorded online. Download a backup before logging out.';
+    badge.style.background  = 'rgba(255,107,107,0.1)';
+    badge.style.border      = '1px solid rgba(255,107,107,0.4)';
+    badge.style.color       = 'var(--danger)';
   }
 }
 
@@ -3282,7 +3331,7 @@ function initApp() {
   // localStorage is used ONLY for same-device/same-browser tab counting.
   // The badge always shows the union of both sources, de-duplicated by username+sessionId.
 
-  _updatePresenceBadge([]); // show "1 online (you)" immediately
+  _updateConnectionBadge(); // show connection status immediately
 
   // Step 1: Start Firebase heartbeat (writes presence to Firestore every 12s)
   if (window._fbStartPresenceHeartbeat) {
@@ -5625,7 +5674,7 @@ function renderDeliveries() {
   const statusFilter = document.getElementById('del-filter-status')?.value || '';
 
   let active = DB.deliveries.filter(d => d.status === 'pending');
-  const done = DB.deliveries.filter(d => d.status === 'delivered').slice(-20).reverse();
+  const done = DB.deliveries.filter(d => d.status === 'delivered').slice().reverse();
 
   // Classify each for filtering
   active = active.filter(d => {
@@ -5672,11 +5721,11 @@ function renderDeliveries() {
 
   if (tbody2) {
   if (done.length === 0) {
-    tbody2.innerHTML = `<tr><td colspan="4" style="text-align:center;color:var(--muted);padding:1.5rem;">No deliveries yet.</td></tr>`;
+    tbody2.innerHTML = `<tr><td colspan="5" style="text-align:center;color:var(--muted);padding:1.5rem;">No deliveries yet.</td></tr>`;
   } else {
     tbody2.innerHTML = done.map(d => {
       const days = Math.floor((new Date(d.deliveredDate) - new Date(d.collectionDate)) / 86400000);
-      return `<tr><td>${escHtml(d.customer)}</td><td style="font-family:'DM Mono',monospace;font-size:0.78rem;">${formatDate(d.collectionDate)}</td><td style="font-family:'DM Mono',monospace;font-size:0.78rem;">${formatDate(d.deliveredDate)}</td><td style="font-family:'DM Mono',monospace;">${days} days</td></tr>`;
+      return `<tr><td>${escHtml(d.customer)}</td><td>${svcLabel(d.serviceTypes)}</td><td style="font-family:'DM Mono',monospace;font-size:0.78rem;">${formatDate(d.collectionDate)}</td><td style="font-family:'DM Mono',monospace;font-size:0.78rem;">${formatDate(d.deliveredDate)}</td><td style="font-family:'DM Mono',monospace;">${days} days</td></tr>`;
     }).join('');
   }
   } // end if (tbody2)
@@ -10214,7 +10263,7 @@ document.addEventListener('DOMContentLoaded', () => {
       }));
       // Only use local badge update if Firebase is blocked (avoid overwriting Firebase data)
       if (window._firebaseBlocked) {
-        _updatePresenceBadge(others);
+        _updateConnectionBadge();
       }
       // Always trigger a merge if we have the merge function
       if (typeof _mergeAndUpdatePresence === 'function' && !window._firebaseBlocked) {
