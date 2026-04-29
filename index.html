@@ -2612,6 +2612,10 @@ async function loadCloudDataAndProceed() {
     document.getElementById('login-import-prompt').style.display = 'none';
     document.getElementById('login-form').style.display = 'block';
     window._appDataReady = true;
+    // Immediately persist the freshly-loaded data so localStorage and Firebase
+    // are up-to-date right from the start of the session. This also syncs
+    // localStorage data to Firebase when localStorage was the newer source.
+    saveData(true);
     launchApp();
   }, 900);
 }
@@ -2786,61 +2790,16 @@ function loginImportAndProceed(input) {
   reader.readAsText(file);
 }
 
-function _offlineLogoutModal() {
-  // Prompt user to download backup before logging out when offline/local-mode
-  const existing = document.getElementById('offline-logout-modal');
-  if (existing) existing.remove();
-  const overlay = document.createElement('div');
-  overlay.id = 'offline-logout-modal';
-  overlay.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.7);z-index:99999;display:flex;align-items:center;justify-content:center;padding:1rem;';
-  const isOffline = !navigator.onLine;
-  const title  = isOffline ? '🔴 You Are Offline' : '🟡 Cloud Sync Unavailable';
-  const detail = isOffline
-    ? 'Your internet connection is down. Any activities since your last cloud sync have only been saved locally on this device.'
-    : 'Cloud sync is unavailable on this network (local mode). Your data is saved on this device only.';
-  overlay.innerHTML = `
-    <div style="background:var(--surface);border:1px solid rgba(255,107,107,0.4);border-radius:14px;padding:1.8rem;max-width:420px;width:100%;font-family:'DM Sans',sans-serif;">
-      <div style="font-size:1.1rem;font-weight:700;margin-bottom:0.6rem;color:var(--danger);">${title}</div>
-      <p style="font-size:0.85rem;color:var(--muted);margin-bottom:1rem;">${detail}</p>
-      <p style="font-size:0.85rem;color:var(--text);margin-bottom:1.4rem;"><b>Recommendation:</b> Download a data backup now. On your next login, import the file — it will automatically sync all your offline activities online.</p>
-      <div style="display:flex;flex-direction:column;gap:0.6rem;">
-        <button onclick="_offlineLogoutDownloadAndLogout()" style="background:rgba(81,207,102,0.15);border:1px solid rgba(81,207,102,0.4);color:var(--success);border-radius:8px;padding:0.6rem 1rem;font-family:'DM Mono',monospace;font-size:0.8rem;cursor:pointer;font-weight:600;">📥 Download Backup &amp; Logout</button>
-        <button onclick="document.getElementById('offline-logout-modal').remove();confirmLogout._skipOfflineCheck=true;confirmLogout();" style="background:rgba(255,107,107,0.1);border:1px solid rgba(255,107,107,0.3);color:var(--danger);border-radius:8px;padding:0.6rem 1rem;font-family:'DM Mono',monospace;font-size:0.8rem;cursor:pointer;">Logout Without Backup</button>
-        <button onclick="document.getElementById('offline-logout-modal').remove();" style="background:rgba(255,255,255,0.05);border:1px solid rgba(255,255,255,0.1);color:var(--muted);border-radius:8px;padding:0.6rem 1rem;font-family:'DM Mono',monospace;font-size:0.8rem;cursor:pointer;">Cancel</button>
-      </div>
-    </div>`;
-  document.body.appendChild(overlay);
-}
-
-function _offlineLogoutDownloadAndLogout() {
-  document.getElementById('offline-logout-modal')?.remove();
-  // Trigger the log/backup download
-  try { _saveLogToDownloadsFolder(); } catch(e) {}
-  try { exportAuditLogJSON(); } catch(e) {}
-  // Small delay so download initiates, then proceed with logout
-  setTimeout(function() {
-    confirmLogout._skipOfflineCheck = true;
-    confirmLogout();
-  }, 600);
-}
-
-function confirmLogout(isAuto) {
-  if (!isAuto && !confirm('Are you sure you want to log out?')) return;
-  // If offline/local-mode and not already bypassed, show warning modal
-  if (!isAuto && !confirmLogout._skipOfflineCheck && (!navigator.onLine || window._firebaseBlocked)) {
-    confirmLogout._skipOfflineCheck = false;
-    _offlineLogoutModal();
-    return;
-  }
-  confirmLogout._skipOfflineCheck = false;
+// ── Core logout executor — ALWAYS called to actually perform the logout ──────
+// Handles data save + Firebase await + doLogout. Never shows any UI prompts.
+function _performLogout(isAuto) {
   logActivity('Logout', isAuto ? 'Auto-logout due to inactivity' : 'Manual logout');
 
   const btn = document.getElementById('logout-btn');
   if (btn) { btn.textContent = '⏳ Saving...'; btn.disabled = true; }
 
-  // Build save object OUTSIDE try so jsonStr is accessible for Firebase save below
+  // ── Synchronous localStorage save — happens unconditionally ──
   let jsonStr = '';
-  // ── Step 1: Synchronous localStorage save (instant, never fails) ──
   try {
     const saveObj = {
       ...DB,
@@ -2853,40 +2812,28 @@ function confirmLogout(isAuto) {
     jsonStr = JSON.stringify(saveObj);
     localStorage.setItem('washnfold_db', jsonStr);
 
-    // ── Step 2: In-app log save (best-effort, must never block logout) ──
+    // In-app scheduled log download (best-effort, never blocks logout)
     try {
-      const _inAppAccts   = DB.settings.autoDownloadAccounts || ['superuser','manager','admin'];
-      const _inAppAllowed = _inAppAccts.includes(currentAccountType);
-      if (_inAppAllowed) {
-        const _inAppIntervalHours = (typeof DB.settings.inAppDownloadIntervalHours === 'number' && DB.settings.inAppDownloadIntervalHours >= 1)
+      const _inAppAccts = DB.settings.autoDownloadAccounts || ['superuser','manager','admin'];
+      if (_inAppAccts.includes(currentAccountType)) {
+        const _hrs = (typeof DB.settings.inAppDownloadIntervalHours === 'number' && DB.settings.inAppDownloadIntervalHours >= 1)
           ? DB.settings.inAppDownloadIntervalHours : 24;
         const _lastSave  = DB.settings.lastDailyLogDate ? new Date(DB.settings.lastDailyLogDate) : null;
-        let _shouldSave  = false;
-        if (_inAppIntervalHours < 24) {
-          _shouldSave = !_lastSave || (Date.now() - _lastSave.getTime()) / 3600000 >= _inAppIntervalHours;
-        } else {
-          _shouldSave = !_lastSave || (Date.now() - _lastSave.getTime()) / 86400000 >= Math.floor(_inAppIntervalHours / 24);
-        }
-        if (_shouldSave) {
+        const _elapsed   = _lastSave ? (Date.now() - _lastSave.getTime()) : Infinity;
+        const _threshold = _hrs < 24 ? _hrs * 3600000 : Math.floor(_hrs / 24) * 86400000;
+        if (_elapsed >= _threshold) {
           DB.settings.lastDailyLogDate = new Date().toISOString();
           _saveLogToDownloadsFolder();
           localStorage.setItem('washnfold_db', JSON.stringify({
             ...DB, _appVersion: '13.0', _savedAt: new Date().toISOString(),
-            deletedSeedIds: DB.deletedSeedIds || [],
-            settings: { ...DB.settings }, recycleBin: DB.recycleBin || []
+            deletedSeedIds: DB.deletedSeedIds || [], settings: { ...DB.settings }, recycleBin: DB.recycleBin || []
           }));
         }
       }
-    } catch(_e) { /* log save failed — logout still proceeds */ }
+    } catch(_e) {}
+  } catch(_e) {}
 
-  } catch(_e) { /* even if everything above fails, we still logout */ }
-
-  // ── Step 3 + 4: Await Firebase save (up to 5s), then logout ──
-  // Critical: we MUST await the Firebase write. If we reload the page before the
-  // async Firebase set() resolves, the Firestore write is abandoned mid-flight and
-  // Firebase ends up with the previous session's data. On next login the stale cloud
-  // data would win over localStorage, reverting all changes since the last save.
-  // ── Firebase save now correctly uses jsonStr defined above ──
+  // ── Firebase save (awaited up to 5 s, then force-logout) ──
   showToast('Logging out ✓');
   if (window._fbSetData && !window._firebaseBlocked && jsonStr) {
     try {
@@ -2897,6 +2844,61 @@ function confirmLogout(isAuto) {
   } else {
     setTimeout(doLogout, 400);
   }
+}
+
+// ── Offline-mode backup modal ─────────────────────────────────────────────────
+// Shown when Firebase is blocked / device is offline. All buttons ultimately
+// call _performLogout so there is NO second confirm dialog.
+function _offlineLogoutModal() {
+  const existing = document.getElementById('offline-logout-modal');
+  if (existing) existing.remove();
+  const overlay = document.createElement('div');
+  overlay.id = 'offline-logout-modal';
+  overlay.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.7);z-index:99999;display:flex;align-items:center;justify-content:center;padding:1rem;';
+  const isOffline = !navigator.onLine;
+  const title  = isOffline ? '🔴 You Are Offline' : '🟡 Cloud Sync Unavailable';
+  const detail = isOffline
+    ? 'Your internet connection is down. Activities since the last cloud sync are saved on this device only.'
+    : 'Cloud sync is unavailable on this network. Your data is saved locally on this device only.';
+  overlay.innerHTML = `
+    <div style="background:var(--surface);border:1px solid rgba(255,107,107,0.4);border-radius:14px;padding:1.8rem;max-width:420px;width:100%;font-family:'DM Sans',sans-serif;">
+      <div style="font-size:1.1rem;font-weight:700;margin-bottom:0.6rem;color:var(--danger);">${title}</div>
+      <p style="font-size:0.85rem;color:var(--muted);margin-bottom:1rem;">${detail}</p>
+      <p style="font-size:0.85rem;color:var(--text);margin-bottom:1.4rem;"><b>Tip:</b> Download a backup before logging out. On your next login, import the file and your data will automatically sync online.</p>
+      <div style="display:flex;flex-direction:column;gap:0.6rem;">
+        <button onclick="_offlineLogoutDownloadAndLogout()" style="background:rgba(81,207,102,0.15);border:1px solid rgba(81,207,102,0.4);color:var(--success);border-radius:8px;padding:0.6rem 1rem;font-family:'DM Mono',monospace;font-size:0.8rem;cursor:pointer;font-weight:600;">📥 Download Backup &amp; Logout</button>
+        <button onclick="document.getElementById('offline-logout-modal').remove();_performLogout(false);" style="background:rgba(255,107,107,0.1);border:1px solid rgba(255,107,107,0.3);color:var(--danger);border-radius:8px;padding:0.6rem 1rem;font-family:'DM Mono',monospace;font-size:0.8rem;cursor:pointer;">Logout Without Backup</button>
+        <button onclick="document.getElementById('offline-logout-modal').remove();" style="background:rgba(255,255,255,0.05);border:1px solid rgba(255,255,255,0.1);color:var(--muted);border-radius:8px;padding:0.6rem 1rem;font-family:'DM Mono',monospace;font-size:0.8rem;cursor:pointer;">Cancel (Stay Logged In)</button>
+      </div>
+    </div>`;
+  document.body.appendChild(overlay);
+}
+
+function _offlineLogoutDownloadAndLogout() {
+  document.getElementById('offline-logout-modal')?.remove();
+  try { _saveLogToDownloadsFolder(); } catch(e) {}
+  try { exportAuditLogJSON(); } catch(e) {}
+  // Brief delay so the download initiates before the page reloads
+  setTimeout(function() { _performLogout(false); }, 700);
+}
+
+// ── Public logout entry point ─────────────────────────────────────────────────
+function confirmLogout(isAuto) {
+  // Auto-logout (inactivity timer): skip all UI, go straight to save + logout
+  if (isAuto) {
+    _performLogout(true);
+    return;
+  }
+  // Manual logout: require confirmation first
+  if (!confirm('Are you sure you want to log out?')) return;
+  // If cloud sync is unavailable, show the backup-download modal instead of
+  // doing a silent logout that might leave data unsynced.
+  if (!navigator.onLine || window._firebaseBlocked) {
+    _offlineLogoutModal();
+    return;
+  }
+  // Online with Firebase available: proceed immediately
+  _performLogout(false);
 }
 
 // ── EmailJS helpers ─────────────────────────────────────────────────
