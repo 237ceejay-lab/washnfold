@@ -2585,11 +2585,13 @@ async function loadCloudDataAndProceed() {
     document.getElementById('login-form').style.display = 'block';
     window._appDataReady = true;
     if (rawData) {
-      // Real data was loaded from Firebase — stamp it with a fresh _savedAt via saveData.
-      saveData(true);
+      // Advance _loginDataSavedAt past the loaded document's timestamps so the
+      // first onSnapshot (which fires with the same just-loaded document) is
+      // rejected by the guard — no need to write back what we just read.
+      window._loginDataSavedAt = new Date().toISOString();
     }
-    // If rawData was null (no prior data found), do NOT call saveData — that would
-    // stamp the empty/seed DB with a fresh _savedAt and overwrite any real Firebase data.
+    // Never write back at login — Firebase already has the authoritative data.
+    // Writing back would risk overwriting newer cloud data on a slow/cached load.
     launchApp();
   }, 900);
 }
@@ -2819,7 +2821,7 @@ function _performLogout(isAuto) {
     }
   } catch(_e) {}
 
-  // ── Firebase save (awaited up to 5 s, then force-logout) ──
+  // ── Firebase save with retry (up to 3 attempts, 12 s hard timeout) ──
   showToast('Logging out ✓');
   const saveObj = {
     ...DB,
@@ -2832,8 +2834,16 @@ function _performLogout(isAuto) {
   const jsonStr = JSON.stringify(saveObj);
   if (window._fbSetData && !window._firebaseBlocked) {
     try {
-      const _saveDone    = window._fbSetData(jsonStr).catch(() => {});
-      const _saveTimeout = new Promise(r => setTimeout(r, 5000));
+      // First attempt — then retry twice with back-off so a transient MTN glitch doesn't lose data
+      const _attempt = function(delay) {
+        return new Promise(function(r) { setTimeout(r, delay); })
+          .then(function() { return window._fbSetData(jsonStr); });
+      };
+      const _saveDone = window._fbSetData(jsonStr)
+        .catch(function() { return _attempt(1500); })  // retry after 1.5 s
+        .catch(function() { return _attempt(3000); })  // retry after another 3 s
+        .catch(function() {});                         // all three failed — proceed anyway
+      const _saveTimeout = new Promise(function(r) { setTimeout(r, 12000); });
       Promise.race([_saveDone, _saveTimeout]).then(doLogout);
     } catch(_e) { setTimeout(doLogout, 400); }
   } else {
@@ -6532,10 +6542,35 @@ function generateReport() {
   lines.push(sep2);
   if (fins.length === 0) { lines.push('  No records in this period.'); }
   else {
-    const combined = [...fins].sort((a,b)=>a.customer.localeCompare(b.customer));
+    const combined = [...fins].sort((a,b) => {
+      // Sort by collection date (delivery) first, then customer name
+      const _getDate = function(rec) {
+        if (rec.invoiceId) {
+          const _d = DB.deliveries.find(function(d) { return d.invoiceId === rec.invoiceId; });
+          if (_d && _d.collectionDate) return _d.collectionDate;
+          const _i = DB.invoices.find(function(i) { return i.id === rec.invoiceId; });
+          if (_i && _i.collectionDate) return _i.collectionDate;
+        }
+        return rec.date || '';
+      };
+      const _da = _getDate(a), _db2 = _getDate(b);
+      if (_da !== _db2) return _da < _db2 ? -1 : 1;
+      return a.customer.localeCompare(b.customer);
+    });
     combined.forEach(r => {
       const bal = r.amount - (r.paidAmount||0);
-      lines.push(`  ${r.customer.padEnd(22)} | ${r.month.padEnd(10)} | ${r.amount.toLocaleString().padStart(10)} FCFA | Paid: ${(r.paidAmount||0).toLocaleString().padStart(8)} | Bal: ${bal.toLocaleString().padStart(8)} | ${r.status.toUpperCase()}`);
+      // Show exact collection date from linked delivery/invoice; fall back to finance record date
+      let _collDate = null;
+      if (r.invoiceId) {
+        const _del = DB.deliveries.find(function(d) { return d.invoiceId === r.invoiceId; });
+        if (_del && _del.collectionDate) _collDate = _del.collectionDate;
+        if (!_collDate) {
+          const _inv = DB.invoices.find(function(i) { return i.id === r.invoiceId; });
+          if (_inv && _inv.collectionDate) _collDate = _inv.collectionDate;
+        }
+      }
+      const _dateLabel = _collDate ? formatDate(_collDate) : (r.date ? formatDate(r.date) : (r.month || '—'));
+      lines.push(`  ${r.customer.padEnd(22)} | ${_dateLabel.padEnd(14)} | ${r.amount.toLocaleString().padStart(10)} FCFA | Paid: ${(r.paidAmount||0).toLocaleString().padStart(8)} | Bal: ${bal.toLocaleString().padStart(8)} | ${r.status.toUpperCase()}`);
     });
     lines.push(sep2);
     lines.push(`  ${'TOTAL:'.padEnd(22)} | ${''.padEnd(10)} | ${totalFinRevenue.toLocaleString().padStart(10)} FCFA | Paid: ${totalCollected.toLocaleString().padStart(8)} | Bal: ${(totalFinRevenue-totalCollected).toLocaleString().padStart(8)} |`);
@@ -8063,25 +8098,51 @@ async function _doCloudSave() {
       recycleBin: DB.recycleBin || []
     };
     const jsonStr = JSON.stringify(saveObj);
-    // Firebase only — track pending state so logout can warn if still saving
-    if (window._fbSetData && !window._firebaseBlocked) {
-      window._fbSavePending = true;
-      window._fbSetData(jsonStr)
-        .then(function() { window._fbSavePending = false; })
-        .catch(function() { window._fbSavePending = false; });
-    }
-    // Update save indicator — show it regardless of mobile CSS (use inline style)
+
     const ind = document.getElementById('autosave-indicator');
-    if (ind) {
-      ind.textContent = window._firebaseBlocked ? '💾 Saved' : '✓ Saved';
-      ind.style.color = window._firebaseBlocked ? 'var(--accent)' : 'var(--success)';
-      ind.style.display = 'inline';
-      ind.style.opacity = '1';
-      clearTimeout(ind._hideTimer);
-      ind._hideTimer = setTimeout(() => { ind.style.opacity = '0'; setTimeout(() => { ind.style.display = ''; }, 400); }, 2200);
-    }
     const lsd = document.getElementById('last-saved-display');
     if (lsd) lsd.textContent = new Date().toLocaleTimeString();
+
+    if (window._firebaseBlocked) {
+      // Offline — show local indicator and fade out
+      if (ind) {
+        ind.textContent = '💾 Offline'; ind.style.color = 'var(--accent)';
+        ind.style.display = 'inline'; ind.style.opacity = '1';
+        clearTimeout(ind._hideTimer);
+        ind._hideTimer = setTimeout(() => { ind.style.opacity = '0'; setTimeout(() => { ind.style.display = ''; }, 400); }, 2200);
+      }
+      return;
+    }
+
+    if (!window._fbSetData) return;
+
+    // Show "Saving…" while write is in-flight
+    if (ind) {
+      ind.textContent = '⏳ Saving…'; ind.style.color = 'var(--muted)';
+      ind.style.display = 'inline'; ind.style.opacity = '1';
+      clearTimeout(ind._hideTimer);
+    }
+
+    window._fbSavePending = true;
+    window._fbSetData(jsonStr)
+      .then(function() {
+        window._fbSavePending = false;
+        if (ind) {
+          ind.textContent = '✓ Saved'; ind.style.color = 'var(--success)';
+          clearTimeout(ind._hideTimer);
+          ind._hideTimer = setTimeout(() => { ind.style.opacity = '0'; setTimeout(() => { ind.style.display = ''; }, 400); }, 2200);
+        }
+      })
+      .catch(function() {
+        window._fbSavePending = false;
+        // Show persistent error — don't auto-hide so the user can see it
+        if (ind) {
+          ind.textContent = '⚠ Save failed'; ind.style.color = 'var(--danger)';
+          ind.style.display = 'inline'; ind.style.opacity = '1';
+          clearTimeout(ind._hideTimer);
+          // Auto-retry: the next saveData() call (via periodic timer or user action) will retry
+        }
+      });
   } catch(e) {}
 }
 
