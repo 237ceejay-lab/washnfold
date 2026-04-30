@@ -2515,29 +2515,37 @@ async function loadCloudDataAndProceed() {
   const msgEl = document.getElementById('cloud-load-msg');
   if (msgEl) msgEl.textContent = 'Connecting to cloud...';
 
-  // Wait for Firebase — max 3s on good networks (onerror fires instantly when blocked)
+  // Wait for Firebase scripts to fully load — no hard cap.
+  // The onerror handlers on the script tags call goOffline() immediately if scripts
+  // can't be fetched, so _firebaseReady will always become true eventually.
+  // A 60-second safety valve covers any unexpected hang.
   let waited = 0;
-  while (!window._firebaseReady && waited < 3000) {
-    await new Promise(r => setTimeout(r, 100));
-    waited += 100;
+  while (!window._firebaseReady && waited < 60000) {
+    if (waited > 0 && waited % 5000 === 0 && msgEl) {
+      msgEl.textContent = 'Still connecting… (' + Math.round(waited / 1000) + 's)';
+    }
+    await new Promise(r => setTimeout(r, 200));
+    waited += 200;
   }
-  // If still not ready after 3s, force offline mode so login isn't blocked
   if (!window._firebaseReady) {
+    // 60-second hard timeout — should never happen in normal usage
     window._firebaseBlocked = true;
     window._firebaseReady   = true;
   }
 
-  // This app is entirely cloud-based — no localStorage fallback.
   if (window._firebaseBlocked) {
-    if (msgEl) msgEl.textContent = '📵 No internet connection — please go online to load your data.';
+    if (msgEl) msgEl.textContent = '📵 Cannot reach cloud — please check your connection.';
   }
 
   let rawData = null;
 
-  // Load exclusively from Firebase
+  // Fetch from Firebase with a 40-second timeout (slow networks need time)
   if (!window._firebaseBlocked && window._fbGetData) {
-    if (msgEl) msgEl.textContent = 'Loading from cloud...';
-    try { rawData = await window._fbGetData(); } catch(e) { /* silent */ }
+    if (msgEl) msgEl.textContent = 'Loading your data from cloud...';
+    try {
+      const _fetchTimeout = new Promise(function(_, rej) { setTimeout(function() { rej(new Error('timeout')); }, 40000); });
+      rawData = await Promise.race([window._fbGetData(), _fetchTimeout]);
+    } catch(e) { rawData = null; }
   }
 
   if (rawData) {
@@ -2832,16 +2840,18 @@ function _performLogout(isAuto) {
     recycleBin: DB.recycleBin || []
   };
   const jsonStr = JSON.stringify(saveObj);
-  if (window._fbSetData && !window._firebaseBlocked) {
+  if (window._fbSetData) {
     try {
-      // First attempt — then retry twice with back-off so a transient MTN glitch doesn't lose data
+      // Always attempt to save — retry twice with back-off so a transient glitch doesn't lose data
       const _attempt = function(delay) {
         return new Promise(function(r) { setTimeout(r, delay); })
           .then(function() { return window._fbSetData(jsonStr); });
       };
       const _saveDone = window._fbSetData(jsonStr)
-        .catch(function() { return _attempt(1500); })  // retry after 1.5 s
-        .catch(function() { return _attempt(3000); })  // retry after another 3 s
+        .then(function(ok) { if (!ok) return _attempt(1500); }) // false return = silent fail, retry
+        .catch(function() { return _attempt(1500); })           // threw = network error, retry
+        .then(function(ok) { if (ok === false) return _attempt(3000); }) // second attempt failed
+        .catch(function() { return _attempt(3000); })           // second threw, retry once more
         .catch(function() {});                         // all three failed — proceed anyway
       const _saveTimeout = new Promise(function(r) { setTimeout(r, 12000); });
       Promise.race([_saveDone, _saveTimeout]).then(doLogout);
@@ -2929,9 +2939,10 @@ function confirmLogout(isAuto) {
   }
   // Manual logout: require confirmation first
   if (!confirm('Are you sure you want to log out?')) return;
-  // If cloud sync is unavailable, show the backup-download modal instead of
-  // doing a silent logout that might leave data unsynced.
-  if (!navigator.onLine || window._firebaseBlocked) {
+  // Only show the offline modal when the device truly has no internet at all.
+  // _firebaseBlocked can be set incorrectly on slow networks, so we rely solely
+  // on navigator.onLine to detect a genuine offline state.
+  if (!navigator.onLine) {
     _offlineLogoutModal();
     return;
   }
@@ -6735,12 +6746,26 @@ function downloadReportPDF() {
   doc.setDrawColor(232,197,71); doc.setLineWidth(1); doc.line(margin,y,margin+50,y); y+=6;
   doc.setFillColor(26,26,46); doc.rect(margin,y,cW,8,'F');
   doc.setFontSize(7.5); doc.setFont('helvetica','bold'); doc.setTextColor(255,255,255);
-  const fCols = ['Customer','Month','Amount','Paid','Balance','Status'];
-  const fColW = [40,20,28,28,28,16];
+  const fCols = ['Customer','Collected','Amount','Paid','Balance','Status'];
+  const fColW = [40,26,25,25,22,22];
   let fx = margin+2;
   fCols.forEach((c,i)=>{ doc.text(c,fx,y+5.5); fx+=fColW[i]; });
   y+=10;
-  const sortedFins = [...fins].sort((a,b)=>a.customer.localeCompare(b.customer));
+  // Sort by collection date then customer name
+  const _getFRCollDate = function(r) {
+    if (r.invoiceId) {
+      const _d = DB.deliveries.find(function(d){ return d.invoiceId === r.invoiceId; });
+      if (_d && _d.collectionDate) return _d.collectionDate;
+      const _i = DB.invoices.find(function(i){ return i.id === r.invoiceId; });
+      if (_i && _i.collectionDate) return _i.collectionDate;
+    }
+    return r.date || '';
+  };
+  const sortedFins = [...fins].sort(function(a,b){
+    const da = _getFRCollDate(a), db2 = _getFRCollDate(b);
+    if (da !== db2) return da < db2 ? -1 : 1;
+    return a.customer.localeCompare(b.customer);
+  });
   sortedFins.forEach((r,idx) => {
     checkY(8);
     if (idx%2===0){ doc.setFillColor(248,249,252); doc.rect(margin,y,cW,7,'F'); }
@@ -6748,7 +6773,9 @@ function downloadReportPDF() {
     fx = margin+2;
     const bal = r.amount-(r.paidAmount||0);
     const statusColor = r.status==='paid'?[40,167,69]:r.status==='partial'?[255,130,0]:[220,53,69];
-    const vals = [r.customer.substring(0,22), r.month, r.amount.toLocaleString(), (r.paidAmount||0).toLocaleString(), bal.toLocaleString()];
+    const _collDate = _getFRCollDate(r);
+    const _collLabel = _collDate ? formatDate(_collDate) : (r.month || '—');
+    const vals = [r.customer.substring(0,22), _collLabel, r.amount.toLocaleString(), (r.paidAmount||0).toLocaleString(), bal.toLocaleString()];
     vals.forEach((v,i)=>{ doc.text(v,fx,y+5); fx+=fColW[i]; });
     doc.setTextColor(...statusColor); doc.setFont('helvetica','bold');
     doc.text(r.status.toUpperCase(),fx,y+5);
@@ -6766,6 +6793,39 @@ function downloadReportPDF() {
   doc.setTextColor(...npColor);
   doc.text(`Net Profit: ${netProfit.toLocaleString()} FCFA`, margin+cW-3,y+5.5,{align:'right'});
   y+=16;
+
+  // Laundry Collections & Deliveries table
+  if (dels.length > 0) {
+    checkY(20);
+    doc.setFontSize(10); doc.setFont('helvetica','bold'); doc.setTextColor(26,26,46);
+    doc.text('LAUNDRY COLLECTIONS & DELIVERIES', margin, y); y+=5;
+    doc.setDrawColor(78,205,196); doc.setLineWidth(1); doc.line(margin,y,margin+80,y); y+=6;
+    doc.setFillColor(26,26,46); doc.rect(margin,y,cW,8,'F');
+    doc.setFontSize(7.5); doc.setFont('helvetica','bold'); doc.setTextColor(255,255,255);
+    const dCols=['Customer','Service','Collected','Delivery Due','Status'];
+    const dColW=[42,26,26,28,38];
+    let dx=margin+2;
+    dCols.forEach(function(c,i){ doc.text(c,dx,y+5.5); dx+=dColW[i]; });
+    y+=10;
+    const sortedDelsP = [...dels].sort(function(a,b){ return (a.collectionDate||'') < (b.collectionDate||'') ? -1 : 1; });
+    sortedDelsP.forEach(function(d,idx){
+      checkY(8);
+      if(idx%2===0){ doc.setFillColor(248,249,252); doc.rect(margin,y,cW,7,'F'); }
+      doc.setFontSize(8); doc.setFont('helvetica','normal'); doc.setTextColor(40,50,70);
+      dx=margin+2;
+      const svcStr = d.serviceTypes==='wash_only'?'Wash Only':d.serviceTypes==='wash_iron'?'Wash & Iron':'Mixed';
+      const statusStr = d.status==='delivered' ? 'Delivered' : 'Pending';
+      const statusCol = d.status==='delivered' ? [40,167,69] : [255,130,0];
+      const dVals = [(d.customer||'').substring(0,24), svcStr, formatDate(d.collectionDate)||'—', formatDate(d.expectedDate)||'—'];
+      dVals.forEach(function(v,i){ doc.text(v,dx,y+5); dx+=dColW[i]; });
+      doc.setTextColor(...statusCol); doc.setFont('helvetica','bold');
+      const deliveredLine = d.status==='delivered' && d.deliveredDate ? statusStr+' '+formatDate(d.deliveredDate) : statusStr;
+      doc.text(deliveredLine, dx, y+5);
+      doc.setTextColor(40,50,70); doc.setFont('helvetica','normal');
+      y+=7;
+    });
+    y+=6;
+  }
 
   // Expenses table
   if (exps.length > 0 && !byMonthName) {
@@ -8103,20 +8163,9 @@ async function _doCloudSave() {
     const lsd = document.getElementById('last-saved-display');
     if (lsd) lsd.textContent = new Date().toLocaleTimeString();
 
-    if (window._firebaseBlocked) {
-      // Offline — show local indicator and fade out
-      if (ind) {
-        ind.textContent = '💾 Offline'; ind.style.color = 'var(--accent)';
-        ind.style.display = 'inline'; ind.style.opacity = '1';
-        clearTimeout(ind._hideTimer);
-        ind._hideTimer = setTimeout(() => { ind.style.opacity = '0'; setTimeout(() => { ind.style.display = ''; }, 400); }, 2200);
-      }
-      return;
-    }
-
     if (!window._fbSetData) return;
 
-    // Show "Saving…" while write is in-flight
+    // Show "Saving…" while write is in-flight — always attempt even if Firebase was slow to init
     if (ind) {
       ind.textContent = '⏳ Saving…'; ind.style.color = 'var(--muted)';
       ind.style.display = 'inline'; ind.style.opacity = '1';
@@ -8125,22 +8174,29 @@ async function _doCloudSave() {
 
     window._fbSavePending = true;
     window._fbSetData(jsonStr)
-      .then(function() {
+      .then(function(ok) {
         window._fbSavePending = false;
-        if (ind) {
-          ind.textContent = '✓ Saved'; ind.style.color = 'var(--success)';
-          clearTimeout(ind._hideTimer);
-          ind._hideTimer = setTimeout(() => { ind.style.opacity = '0'; setTimeout(() => { ind.style.display = ''; }, 400); }, 2200);
+        // _fbSetData returns true on confirmed write, false on silent failure
+        if (ok) {
+          if (ind) {
+            ind.textContent = '✓ Saved'; ind.style.color = 'var(--success)';
+            clearTimeout(ind._hideTimer);
+            ind._hideTimer = setTimeout(() => { ind.style.opacity = '0'; setTimeout(() => { ind.style.display = ''; }, 400); }, 2200);
+          }
+        } else {
+          if (ind) {
+            ind.textContent = '⚠ Save failed'; ind.style.color = 'var(--danger)';
+            ind.style.display = 'inline'; ind.style.opacity = '1';
+            clearTimeout(ind._hideTimer);
+          }
         }
       })
       .catch(function() {
         window._fbSavePending = false;
-        // Show persistent error — don't auto-hide so the user can see it
         if (ind) {
           ind.textContent = '⚠ Save failed'; ind.style.color = 'var(--danger)';
           ind.style.display = 'inline'; ind.style.opacity = '1';
           clearTimeout(ind._hideTimer);
-          // Auto-retry: the next saveData() call (via periodic timer or user action) will retry
         }
       });
   } catch(e) {}
