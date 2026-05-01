@@ -2839,6 +2839,24 @@ function _performLogout(isAuto) {
     settings: { ...DB.settings },
     recycleBin: DB.recycleBin || []
   };
+  // Apply same payload trimming as _doCloudSave
+  if (Array.isArray(saveObj.invoices)) {
+    saveObj.invoices = saveObj.invoices.map(function(inv) {
+      const out = Object.assign({}, inv); delete out.invoiceText; return out;
+    });
+  }
+  if (Array.isArray(saveObj.finance) && window._seedDefaultsMap) {
+    saveObj.finance = saveObj.finance.filter(function(r) {
+      if (!r.id || !r.id.startsWith('fin_seed_')) return true;
+      const def = window._seedDefaultsMap[r.id];
+      if (!def) return true;
+      return (r.paidAmount !== def.paidAmount || r.status !== def.status ||
+              r.amount !== def.amount || r.paymentMethod !== def.paymentMethod);
+    });
+  }
+  if (Array.isArray(saveObj.activityLog) && saveObj.activityLog.length > 300) {
+    saveObj.activityLog = saveObj.activityLog.slice(-300);
+  }
   const jsonStr = JSON.stringify(saveObj);
   if (window._fbSetData) {
     try {
@@ -4301,8 +4319,11 @@ function viewInvoice(id) {
   const inv = DB.invoices.find(i => i.id === id);
   if (!inv) return;
   window._viewingInvoiceId = id;
-  document.getElementById('invoice-detail-text').textContent = inv.invoiceText;
-  currentViewInvoiceText = inv.invoiceText;
+  if (!inv.invoiceText && Array.isArray(inv.items) && inv.items.length > 0) {
+    inv.invoiceText = buildInvoiceText(inv.customerName, inv.collectionDate, inv.items, inv.parcelingIncluded !== false, inv.bagCost || 0);
+  }
+  document.getElementById('invoice-detail-text').textContent = inv.invoiceText || '';
+  currentViewInvoiceText = inv.invoiceText || '';
   // Show service-switch for all pure (non-mixed) invoices regardless of whether items are stored
   const switchRow = document.getElementById('inv-detail-svc-switch');
   if (switchRow) {
@@ -8157,6 +8178,34 @@ async function _doCloudSave() {
       settings: { ...DB.settings },
       recycleBin: DB.recycleBin || []
     };
+
+    // ── Trim payload to stay under Firestore's 1 MiB document limit ──────────
+    // 1. Strip invoiceText from each invoice — regenerated on demand from items
+    if (Array.isArray(saveObj.invoices)) {
+      saveObj.invoices = saveObj.invoices.map(function(inv) {
+        const out = Object.assign({}, inv);
+        // Only strip invoiceText if items are present — it can then be regenerated on demand.
+        // Label-only invoices (no items) keep their invoiceText since it cannot be rebuilt.
+        if (Array.isArray(inv.items) && inv.items.length > 0) delete out.invoiceText;
+        return out;
+      });
+    }
+    // 2. Exclude HTML-hardcoded seed finance records that haven't been modified
+    //    (they'll be re-added by _loadSeedData() on every load)
+    if (Array.isArray(saveObj.finance) && window._seedDefaultsMap) {
+      saveObj.finance = saveObj.finance.filter(function(r) {
+        if (!r.id || !r.id.startsWith('fin_seed_')) return true;
+        const def = window._seedDefaultsMap[r.id];
+        if (!def) return true; // not in HTML seeds → keep in cloud
+        return (r.paidAmount !== def.paidAmount || r.status !== def.status ||
+                r.amount !== def.amount || r.paymentMethod !== def.paymentMethod);
+      });
+    }
+    // 3. Trim activityLog — keep only the 300 most recent entries
+    if (Array.isArray(saveObj.activityLog) && saveObj.activityLog.length > 300) {
+      saveObj.activityLog = saveObj.activityLog.slice(-300);
+    }
+
     const jsonStr = JSON.stringify(saveObj);
 
     const ind = document.getElementById('autosave-indicator');
@@ -9776,6 +9825,13 @@ function _loadSeedData() {
   {id:'fin_seed_937',customer:"Mrs Lah",month:'February',amount:43650,paidAmount:0,status:'unpaid',paymentMethod:"-",date:'2025-02-01'},
   {id:'fin_seed_938',customer:"Mme Bruno",month:'February',amount:24200,paidAmount:24200,status:'paid',paymentMethod:"Mobile Money",date:'2025-02-01'}
 ];
+  // Expose defaults map so _doCloudSave can exclude unchanged seeds from the cloud payload
+  if (!window._seedDefaultsMap) {
+    window._seedDefaultsMap = {};
+    seedFinance.forEach(function(r) {
+      window._seedDefaultsMap[r.id] = { paidAmount: r.paidAmount, status: r.status, amount: r.amount, paymentMethod: r.paymentMethod };
+    });
+  }
   const _ds2 = new Set(DB.deletedSeedIds || []);
   seedFinance.forEach(r => {
     if (_ds2.has(r.id)) return; // user deliberately deleted this seed record — skip
