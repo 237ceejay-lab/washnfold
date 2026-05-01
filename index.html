@@ -1645,6 +1645,15 @@ body.mobile-view .card-title-row { flex-direction: column; align-items: flex-sta
           </div>
         </div>
       </div>
+      <div class="form-row" style="margin-bottom:0.8rem;">
+        <div class="form-group" style="max-width:260px;">
+          <label>Sort Order</label>
+          <select id="report-sort-order">
+            <option value="date">By Date Collected (oldest first)</option>
+            <option value="alpha">Alphabetical (A–Z by customer)</option>
+          </select>
+        </div>
+      </div>
       <div class="btn-row">
         <button class="btn btn-primary" onclick="generateReport()">📊 Generate Report</button>
       </div>
@@ -6528,6 +6537,7 @@ function generateReport() {
   window._reportByMonthName = byMonthName;
   window._reportChallenges   = (document.getElementById('report-challenges')?.value  || '').trim();
   window._reportMitigations  = (document.getElementById('report-mitigations')?.value || '').trim();
+  window._reportSortOrder    = document.getElementById('report-sort-order')?.value || 'date';
 
   const expStart = document.getElementById('report-exp-start').value;
   const expEnd = document.getElementById('report-exp-end').value;
@@ -6607,18 +6617,19 @@ function generateReport() {
   lines.push(sep2);
   if (fins.length === 0) { lines.push('  No records in this period.'); }
   else {
+    const _getCollDate = function(rec) {
+      if (rec.invoiceId) {
+        const _d = DB.deliveries.find(function(d) { return d.invoiceId === rec.invoiceId; });
+        if (_d && _d.collectionDate) return _d.collectionDate;
+        const _i = DB.invoices.find(function(i) { return i.id === rec.invoiceId; });
+        if (_i && _i.collectionDate) return _i.collectionDate;
+      }
+      return rec.date || '';
+    };
+    const _sortAlpha = window._reportSortOrder === 'alpha';
     const combined = [...fins].sort((a,b) => {
-      // Sort by collection date (delivery) first, then customer name
-      const _getDate = function(rec) {
-        if (rec.invoiceId) {
-          const _d = DB.deliveries.find(function(d) { return d.invoiceId === rec.invoiceId; });
-          if (_d && _d.collectionDate) return _d.collectionDate;
-          const _i = DB.invoices.find(function(i) { return i.id === rec.invoiceId; });
-          if (_i && _i.collectionDate) return _i.collectionDate;
-        }
-        return rec.date || '';
-      };
-      const _da = _getDate(a), _db2 = _getDate(b);
+      if (_sortAlpha) return a.customer.localeCompare(b.customer);
+      const _da = _getCollDate(a), _db2 = _getCollDate(b);
       if (_da !== _db2) return _da < _db2 ? -1 : 1;
       return a.customer.localeCompare(b.customer);
     });
@@ -6712,6 +6723,7 @@ function generateDeliveriesReport() {
   window._reportDelEndDate   = endDate;
   window._reportDelSvcFilter = svcFilter;
   window._reportDelStFilter  = stFilter;
+  window._reportSortOrder    = document.getElementById('report-sort-order')?.value || 'date';
 
   const SEP  = '═══════════════════════════════════════════';
   const sep2 = '───────────────────────────────────────────';
@@ -6734,7 +6746,11 @@ function generateDeliveriesReport() {
   if (dels.length === 0) {
     lines.push('  No records found for the selected filters.');
   } else {
-    const sorted = [...dels].sort((a, b) => (a.collectionDate || '') < (b.collectionDate || '') ? -1 : 1);
+    const _delSortAlpha = window._reportSortOrder === 'alpha';
+    const sorted = [...dels].sort(function(a, b) {
+      if (_delSortAlpha) return (a.customer||'').localeCompare(b.customer||'');
+      return (a.collectionDate||'') < (b.collectionDate||'') ? -1 : 1;
+    });
     sorted.forEach(d => {
       const statusStr = d.status === 'delivered' ? 'DELIVERED' : 'PENDING';
       const svcStr    = d.serviceTypes === 'wash_only' ? 'Wash Only' : d.serviceTypes === 'wash_iron' ? 'Wash & Iron' : 'Mixed';
@@ -6836,7 +6852,11 @@ function downloadDeliveriesReportPDF() {
     doc.text('No records found for the selected filters.', margin+4, y+5);
     y+=10;
   } else {
-    const sorted = [...dels].sort(function(a,b){ return (a.collectionDate||'') < (b.collectionDate||'') ? -1 : 1; });
+    const _delPdfSortAlpha = window._reportSortOrder === 'alpha';
+    const sorted = [...dels].sort(function(a,b){
+      if (_delPdfSortAlpha) return (a.customer||'').localeCompare(b.customer||'');
+      return (a.collectionDate||'') < (b.collectionDate||'') ? -1 : 1;
+    });
     sorted.forEach(function(d,idx){
       checkY(8);
       if(idx%2===0){ doc.setFillColor(248,249,252); doc.rect(margin,y,cW,7,'F'); }
@@ -6962,7 +6982,6 @@ function downloadReportPDF() {
   let fx = margin+2;
   fCols.forEach((c,i)=>{ doc.text(c,fx,y+5.5); fx+=fColW[i]; });
   y+=10;
-  // Sort by collection date then customer name
   const _getFRCollDate = function(r) {
     if (r.invoiceId) {
       const _d = DB.deliveries.find(function(d){ return d.invoiceId === r.invoiceId; });
@@ -6972,7 +6991,9 @@ function downloadReportPDF() {
     }
     return r.date || '';
   };
+  const _pdfSortAlpha = window._reportSortOrder === 'alpha';
   const sortedFins = [...fins].sort(function(a,b){
+    if (_pdfSortAlpha) return a.customer.localeCompare(b.customer);
     const da = _getFRCollDate(a), db2 = _getFRCollDate(b);
     if (da !== db2) return da < db2 ? -1 : 1;
     return a.customer.localeCompare(b.customer);
