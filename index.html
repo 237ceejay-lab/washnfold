@@ -110,6 +110,7 @@ window._FIREBASE_CONFIG  = {
 };
 
 window._fbGetData = async function() { return null; };
+window._fbLastSaveError = null;
 window._fbSetData = async function(j) { return false; };
 window._fbRegisterPresence       = async function(){};
 window._fbStartPresenceHeartbeat = function(){};
@@ -144,12 +145,13 @@ window._initFirebase = function() {
     };
 
     window._fbSetData = async function(jsonStr) {
+      window._fbLastSaveError = null;
       try {
         await db.collection('washnfold').doc('appdata').set({
           payload: jsonStr, updatedAt: new Date().toISOString()
         });
         return true;
-      } catch(e) { return false; }
+      } catch(e) { window._fbLastSaveError = e; return false; }
     };
 
     window._fbRegisterPresence = async function(u, t) {
@@ -2039,6 +2041,7 @@ body.mobile-view .card-title-row { flex-direction: column; align-items: flex-sta
             <option value="24">Every 24 hours (daily) — default</option>
             <option value="48">Every 2 days</option>
             <option value="72">Every 3 days</option>
+            <option value="0">Never (manual only)</option>
           </select>
         </div>
         <div class="form-group">
@@ -2061,6 +2064,7 @@ body.mobile-view .card-title-row { flex-direction: column; align-items: flex-sta
             <option value="48">Every 2 days</option>
             <option value="72">Every 3 days</option>
             <option value="168">Every 7 days (weekly)</option>
+            <option value="0">Never (manual only)</option>
           </select>
         </div>
         <div class="form-group">
@@ -2759,9 +2763,9 @@ function mergeLoadedData(loaded, opts) {
     if (DB.settings.lastDailyLogDate === undefined) DB.settings.lastDailyLogDate = null;
     if (DB.settings.inactivityMins === undefined) DB.settings.inactivityMins = 5;
     // ── v12 migration: auto-download controls ────────────────────────
-    if (typeof DB.settings.localDownloadIntervalHours !== 'number' || DB.settings.localDownloadIntervalHours < 1)
+    if (typeof DB.settings.localDownloadIntervalHours !== 'number' || DB.settings.localDownloadIntervalHours < 0)
       DB.settings.localDownloadIntervalHours = 24;
-    if (typeof DB.settings.inAppDownloadIntervalHours !== 'number' || DB.settings.inAppDownloadIntervalHours < 1)
+    if (typeof DB.settings.inAppDownloadIntervalHours !== 'number' || DB.settings.inAppDownloadIntervalHours < 0)
       DB.settings.inAppDownloadIntervalHours = 24;
     if (!Array.isArray(DB.settings.autoDownloadAccounts))
       DB.settings.autoDownloadAccounts = ['superuser','manager','admin'];
@@ -2857,13 +2861,14 @@ function _performLogout(isAuto) {
   const btn = document.getElementById('logout-btn');
   if (btn) { btn.textContent = '⏳ Saving...'; btn.disabled = true; }
 
-  // In-app log download — only manager/admin, only on first logout of the calendar day
+  // In-app log download — only if configured interval has elapsed since last save
   try {
-    if (currentAccountType === 'manager' || currentAccountType === 'admin') {
-      const _todayLocal = new Date().toLocaleDateString('en-CA');
-      const _lastLocal  = DB.settings.lastDailyLogDate
-        ? new Date(DB.settings.lastDailyLogDate).toLocaleDateString('en-CA') : null;
-      if (_lastLocal !== _todayLocal) {
+    const _inAppH = DB.settings.inAppDownloadIntervalHours;
+    if (_inAppH !== 0 && (currentAccountType === 'manager' || currentAccountType === 'admin')) {
+      const _intervalH = (_inAppH >= 1) ? _inAppH : 24;
+      const _lastLog = DB.settings.lastDailyLogDate ? new Date(DB.settings.lastDailyLogDate) : null;
+      const _hoursSinceLast = _lastLog ? (Date.now() - _lastLog.getTime()) / 3600000 : Infinity;
+      if (_hoursSinceLast >= _intervalH) {
         DB.settings.lastDailyLogDate = new Date().toISOString();
         _saveLogToDownloadsFolder();
       }
@@ -3121,6 +3126,7 @@ function scheduleDailyEmail() {
   if (!isEmailJSConfigured()) return;
 
   const checkAndSend = async () => {
+    if (DB.settings.localDownloadIntervalHours === 0) return; // "Never" — skip entirely
     // Respect per-account local-download setting
     const localAccts = DB.settings.autoDownloadLocalAccounts || ['superuser','manager','admin'];
     const localAllowed = localAccts.includes(currentAccountType);
@@ -3151,6 +3157,7 @@ function stopDailyEmailScheduler() {
 
 // ── Fallback (EmailJS not set up): backup download + mailto at configured interval ──
 function maybeSendFallbackLog() {
+  if (DB.settings.localDownloadIntervalHours === 0) return; // "Never" — skip entirely
   const last = DB.settings.lastLogSentAt ? new Date(DB.settings.lastLogSentAt) : null;
   const intervalHours = (typeof DB.settings.localDownloadIntervalHours === 'number' && DB.settings.localDownloadIntervalHours >= 1)
     ? DB.settings.localDownloadIntervalHours : 24;
@@ -3199,16 +3206,22 @@ function updateEmailStatusUI() {
   const dailyEl = document.getElementById('su-daily-status');
   const lastEl  = document.getElementById('su-last-sent');
   if (dailyEl) {
-    const localH  = DB.settings.localDownloadIntervalHours || 24;
-    const inAppH  = DB.settings.inAppDownloadIntervalHours || 24;
+    const localH  = (typeof DB.settings.localDownloadIntervalHours === 'number') ? DB.settings.localDownloadIntervalHours : 24;
+    const inAppH  = (typeof DB.settings.inAppDownloadIntervalHours === 'number')  ? DB.settings.inAppDownloadIntervalHours : 24;
     const localAc = (DB.settings.autoDownloadLocalAccounts || ['superuser','manager','admin']).join(', ');
     const inAppAc = (DB.settings.autoDownloadAccounts      || ['superuser','manager','admin']).join(', ');
+    const _lhStr = localH === 0 ? 'Never' : `every ${localH}h`;
+    const _ihStr = inAppH === 0 ? 'Never' : `every ${inAppH}h`;
     if (isEmailJSConfigured()) {
-      dailyEl.textContent = `Auto backup + email: ACTIVE — local device every ${localH}h (${localAc}) · in-app folder every ${inAppH}h (${inAppAc})`;
+      dailyEl.textContent = `Auto backup + email: ACTIVE — local device ${_lhStr} (${localAc}) · in-app folder ${_ihStr} (${inAppAc})`;
       dailyEl.style.color = 'var(--success)';
     } else {
-      const fallbackDays = Math.min(7, Math.max(3.5, (localH * 3.5) / 24)).toFixed(1);
-      dailyEl.textContent = `Auto-email INACTIVE. Configure EmailJS above for automatic sending. Fallback: backup download + mailto every ~${fallbackDays} days at logout (for: ${localAc}).`;
+      if (localH === 0) {
+        dailyEl.textContent = `Auto-email INACTIVE. Configure EmailJS above. Local auto-download: Never (manual only).`;
+      } else {
+        const fallbackDays = Math.min(7, Math.max(3.5, (localH * 3.5) / 24)).toFixed(1);
+        dailyEl.textContent = `Auto-email INACTIVE. Configure EmailJS above for automatic sending. Fallback: backup download + mailto every ~${fallbackDays} days at logout (for: ${localAc}).`;
+      }
       dailyEl.style.color = 'var(--accent)';
     }
   }
@@ -5622,7 +5635,7 @@ function renderDownloadsFolder() {
     el.innerHTML = `<div class="empty-state" style="padding:3rem;">
       <div class="icon" style="font-size:2.5rem;">📂</div>
       <div style="margin-top:0.5rem;">No logs saved yet.</div>
-      <div style="font-size:0.78rem;color:var(--muted);margin-top:0.3rem;">Logs are auto-saved at the configured interval (currently every ${DB.settings.inAppDownloadIntervalHours || 24}h), or click <b>💾 Save Log Now</b> above.</div>
+      <div style="font-size:0.78rem;color:var(--muted);margin-top:0.3rem;">Logs are auto-saved at the configured interval (currently ${DB.settings.inAppDownloadIntervalHours === 0 ? 'Never — manual only' : 'every ' + (DB.settings.inAppDownloadIntervalHours || 24) + 'h'}), or click <b>💾 Save Log Now</b> above.</div>
     </div>`;
     return;
   }
@@ -7617,7 +7630,7 @@ function loadAutoDownloadSettingsUI() {
   // In-app interval
   const inAppSel = document.getElementById('su-inapp-interval');
   if (inAppSel) {
-    const v = String(DB.settings.inAppDownloadIntervalHours || 24);
+    const v = String(typeof DB.settings.inAppDownloadIntervalHours === 'number' ? DB.settings.inAppDownloadIntervalHours : 24);
     // Set value; if not in list, add it
     let found = false;
     Array.from(inAppSel.options).forEach(o => { if (o.value === v) { o.selected = true; found = true; } });
@@ -7627,7 +7640,7 @@ function loadAutoDownloadSettingsUI() {
   // Local device interval
   const localSel = document.getElementById('su-local-interval');
   if (localSel) {
-    const v = String(DB.settings.localDownloadIntervalHours || 24);
+    const v = String(typeof DB.settings.localDownloadIntervalHours === 'number' ? DB.settings.localDownloadIntervalHours : 24);
     let found = false;
     Array.from(localSel.options).forEach(o => { if (o.value === v) { o.selected = true; found = true; } });
     if (!found) { const opt = document.createElement('option'); opt.value = v; opt.textContent = `Every ${v} hours (custom)`; opt.selected = true; localSel.appendChild(opt); }
@@ -7665,12 +7678,12 @@ function saveAutoDownloadSettings() {
   const localAccts = document.getElementById('su-local-accounts');
 
   if (inAppSel) {
-    const h = parseInt(inAppSel.value) || 24;
-    DB.settings.inAppDownloadIntervalHours = Math.max(1, h);
+    const h = parseInt(inAppSel.value);
+    DB.settings.inAppDownloadIntervalHours = isNaN(h) ? 24 : Math.max(0, h);
   }
   if (localSel) {
-    const h = parseInt(localSel.value) || 24;
-    DB.settings.localDownloadIntervalHours = Math.max(1, h);
+    const h = parseInt(localSel.value);
+    DB.settings.localDownloadIntervalHours = isNaN(h) ? 24 : Math.max(0, h);
   }
   if (inAppAccts) {
     DB.settings.autoDownloadAccounts = Array.from(inAppAccts.querySelectorAll('input[type=checkbox]:checked'))
@@ -7681,15 +7694,31 @@ function saveAutoDownloadSettings() {
       .map(cb => cb.value);
   }
 
-  saveData();
+  const _inH = DB.settings.inAppDownloadIntervalHours;
+  const _loH = DB.settings.localDownloadIntervalHours;
+
+  // Reset both timestamps to now so the interval counts from the moment settings are saved,
+  // not from any previous download. This means the next download fires exactly intervalH
+  // hours from now, regardless of what happened before.
+  const _settingsSavedAt = new Date().toISOString();
+  DB.settings.lastDailyLogDate = _settingsSavedAt;
+  DB.settings.lastLogSentAt   = _settingsSavedAt;
+
+  logActivity('Settings', `Updated auto-download controls: in-app ${_inH === 0 ? 'Never' : 'every ' + _inH + 'h'} (${(DB.settings.autoDownloadAccounts||[]).join(', ')}), local ${_loH === 0 ? 'Never' : 'every ' + _loH + 'h'} (${(DB.settings.autoDownloadLocalAccounts||[]).join(', ')})`);
+  saveData(true);
   // Restart the daily email scheduler with the new interval
   scheduleDailyEmail();
-  logActivity('Settings', `Updated auto-download controls: in-app every ${DB.settings.inAppDownloadIntervalHours}h (${(DB.settings.autoDownloadAccounts||[]).join(', ')}), local every ${DB.settings.localDownloadIntervalHours}h (${(DB.settings.autoDownloadLocalAccounts||[]).join(', ')})`);
   const statusEl = document.getElementById('su-autodl-status');
   if (statusEl) {
-    statusEl.textContent = '✓ Saved — In-App: every ' + DB.settings.inAppDownloadIntervalHours + 'h | Local: every ' + DB.settings.localDownloadIntervalHours + 'h';
+    const _fmtNext = function(h) {
+      if (h === 0) return 'Never';
+      const d = new Date(Date.now() + h * 3600000);
+      return 'every ' + h + 'h — next at logout on/after ' +
+        d.toLocaleString('en-GB', { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit' });
+    };
+    statusEl.textContent = '✓ Saved — In-App: ' + _fmtNext(_inH) + ' | Local: ' + _fmtNext(_loH);
     statusEl.style.display = 'block';
-    setTimeout(() => { statusEl.style.display = 'none'; }, 3500);
+    setTimeout(() => { statusEl.style.display = 'none'; }, 6000);
   }
   showToast('Auto-download settings saved ✓');
 }
@@ -8344,6 +8373,21 @@ function saveData(immediate) {
   }
 }
 
+function _getSaveFailReason() {
+  if (!navigator.onLine) return 'No internet connection';
+  const err = window._fbLastSaveError;
+  if (!err) {
+    if (window._firebaseReadOk === false) return 'Cloud sync unavailable';
+    return null;
+  }
+  if (err.code === 'permission-denied') return 'Permission denied';
+  if (err.code === 'unavailable') return 'Connection unavailable';
+  if (err.code === 'resource-exhausted') return 'Quota exceeded';
+  if (err.message && err.message.includes('exceeds')) return 'Data too large';
+  if (err.code) return err.code.replace(/-/g, ' ');
+  return null;
+}
+
 async function _doCloudSave() {
   try {
     const _nowISO = new Date().toISOString();
@@ -8392,36 +8436,50 @@ async function _doCloudSave() {
 
     if (!window._fbSetData) return;
 
-    // Show "Saving…" while write is in-flight — always attempt even if Firebase was slow to init
+    // Show "Saving…" while write is in-flight
     if (ind) {
       ind.textContent = '⏳ Saving…'; ind.style.color = 'var(--muted)';
       ind.style.display = 'inline'; ind.style.opacity = '1';
       clearTimeout(ind._hideTimer);
     }
 
+    // After 15s with no response (slow MTN network), update label but keep waiting —
+    // Firebase still resolves eventually and the final result (✓ Saved / ⚠ failed) will show.
+    const _fbSaveTimeout = setTimeout(function() {
+      if (ind && (ind.textContent === '⏳ Saving…')) {
+        ind.textContent = '⏳ Slow connection…'; ind.style.color = 'var(--accent)';
+      }
+    }, 15000);
+
     window._fbSavePending = true;
     window._fbSetData(jsonStr)
       .then(function(ok) {
+        clearTimeout(_fbSaveTimeout);
         window._fbSavePending = false;
-        // _fbSetData returns true on confirmed write, false on silent failure
         if (ok) {
           if (ind) {
             ind.textContent = '✓ Saved'; ind.style.color = 'var(--success)';
+            ind.style.display = 'inline'; ind.style.opacity = '1';
             clearTimeout(ind._hideTimer);
             ind._hideTimer = setTimeout(() => { ind.style.opacity = '0'; setTimeout(() => { ind.style.display = ''; }, 400); }, 2200);
           }
         } else {
           if (ind) {
-            ind.textContent = '⚠ Save failed'; ind.style.color = 'var(--danger)';
+            const _reason = _getSaveFailReason();
+            ind.textContent = _reason ? '⚠ ' + _reason : '⚠ Save failed';
+            ind.style.color = 'var(--danger)';
             ind.style.display = 'inline'; ind.style.opacity = '1';
             clearTimeout(ind._hideTimer);
           }
         }
       })
-      .catch(function() {
+      .catch(function(caughtErr) {
+        clearTimeout(_fbSaveTimeout);
         window._fbSavePending = false;
         if (ind) {
-          ind.textContent = '⚠ Save failed'; ind.style.color = 'var(--danger)';
+          const _reason = !navigator.onLine ? 'No internet connection' : _getSaveFailReason();
+          ind.textContent = _reason ? '⚠ ' + _reason : '⚠ Save failed';
+          ind.style.color = 'var(--danger)';
           ind.style.display = 'inline'; ind.style.opacity = '1';
           clearTimeout(ind._hideTimer);
         }
