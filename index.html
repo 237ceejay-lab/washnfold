@@ -1548,6 +1548,7 @@ body.mobile-view .card-title-row { flex-direction: column; align-items: flex-sta
             <option value="monthly">Monthly Report (by date)</option>
             <option value="bymonth">Monthly Report (by month name)</option>
             <option value="custom">Custom Date Range</option>
+          <option value="deliveries">Collections &amp; Deliveries</option>
           </select>
         </div>
         <div class="form-group" id="report-ref-date-group">
@@ -1586,7 +1587,38 @@ body.mobile-view .card-title-row { flex-direction: column; align-items: flex-sta
           <input type="date" id="report-end-date">
         </div>
       </div>
-      <div style="background:rgba(78,205,196,0.06);border:1px solid rgba(78,205,196,0.25);border-radius:8px;padding:0.9rem 1rem;margin-bottom:1rem;">
+      <div id="report-deliveries-filters" style="display:none;margin-bottom:1rem;">
+        <div class="form-row">
+          <div class="form-group">
+            <label>From Date (Collection)</label>
+            <input type="date" id="report-del-start">
+          </div>
+          <div class="form-group">
+            <label>To Date (Collection)</label>
+            <input type="date" id="report-del-end">
+          </div>
+        </div>
+        <div class="form-row" style="margin-top:0;">
+          <div class="form-group">
+            <label>Service Type</label>
+            <select id="report-del-service">
+              <option value="all">All Services</option>
+              <option value="wash_only">Wash Only</option>
+              <option value="wash_iron">Wash &amp; Iron</option>
+              <option value="mixed">Mixed</option>
+            </select>
+          </div>
+          <div class="form-group">
+            <label>Delivery Status</label>
+            <select id="report-del-status">
+              <option value="all">All Statuses</option>
+              <option value="pending">Pending</option>
+              <option value="delivered">Delivered</option>
+            </select>
+          </div>
+        </div>
+      </div>
+      <div id="report-exp-section" style="background:rgba(78,205,196,0.06);border:1px solid rgba(78,205,196,0.25);border-radius:8px;padding:0.9rem 1rem;margin-bottom:1rem;">
         <div style="font-family:'DM Mono',monospace;font-size:0.63rem;letter-spacing:0.15em;text-transform:uppercase;color:var(--accent2);margin-bottom:0.6rem;">💸 Expense Date Range (for this report)</div>
         <div class="form-row" style="margin-bottom:0;">
           <div class="form-group">
@@ -1600,7 +1632,7 @@ body.mobile-view .card-title-row { flex-direction: column; align-items: flex-sta
         </div>
         <div class="input-hint" style="margin-top:0.4rem;">Leave blank to include all expenses, or set a range to limit which expenses appear in the report.</div>
       </div>
-      <div style="background:rgba(116,185,255,0.05);border:1px solid rgba(116,185,255,0.2);border-radius:8px;padding:0.9rem 1rem;margin-bottom:1rem;">
+      <div id="report-notes-section" style="background:rgba(116,185,255,0.05);border:1px solid rgba(116,185,255,0.2);border-radius:8px;padding:0.9rem 1rem;margin-bottom:1rem;">
         <div style="font-family:'DM Mono',monospace;font-size:0.63rem;letter-spacing:0.15em;text-transform:uppercase;color:var(--info);margin-bottom:0.8rem;">📝 Manager's Notes (Optional)</div>
         <div class="form-row" style="margin-bottom:0;">
           <div class="form-group">
@@ -6439,15 +6471,24 @@ function renderOverview() {
 // ══════════════════════════════════════════════════════════════════
 function onReportTypeChange() {
   const type = document.getElementById('report-type').value;
-  document.getElementById('report-ref-date-group').style.display = (type === 'custom' || type === 'bymonth') ? 'none' : '';
+  const isDel = type === 'deliveries';
+  document.getElementById('report-ref-date-group').style.display = (type === 'custom' || type === 'bymonth' || isDel) ? 'none' : '';
   document.getElementById('report-custom-range').style.display = type === 'custom' ? '' : 'none';
   document.getElementById('report-month-name-group').style.display = type === 'bymonth' ? '' : 'none';
   const yearGrp = document.getElementById('report-year-group');
   if (yearGrp) yearGrp.style.display = type === 'bymonth' ? '' : 'none';
+  const delFilters = document.getElementById('report-deliveries-filters');
+  if (delFilters) delFilters.style.display = isDel ? '' : 'none';
+  const expSec = document.getElementById('report-exp-section');
+  if (expSec) expSec.style.display = isDel ? 'none' : '';
+  const notesSec = document.getElementById('report-notes-section');
+  if (notesSec) notesSec.style.display = isDel ? 'none' : '';
 }
 
 function generateReport() {
   const type = document.getElementById('report-type').value;
+  window._reportIsDeliveries = false;
+  if (type === 'deliveries') { generateDeliveriesReport(); return; }
   let startDate, endDate, label, byMonthName = null;
 
   if (type === 'custom') {
@@ -6515,14 +6556,9 @@ function generateReport() {
     dels = DB.deliveries;
     invs = DB.invoices;
   } else {
-    // For date-based reports: finance is filtered by dateModified (last activity date)
-    // so daily reports reflect activity on that day, not just when laundry was collected
-    fins = DB.finance.filter(f => {
-      const effectiveDate = f.dateModified || f.date || '';
-      return effectiveDate >= startDate && effectiveDate <= endDate;
-    });
+    fins = DB.finance.filter(f => (f.date || '') >= startDate && (f.date || '') <= endDate);
     dels = DB.deliveries.filter(d => d.collectionDate >= startDate && d.collectionDate <= endDate);
-    invs = DB.invoices.filter(i => i.date >= startDate && i.date <= endDate);
+    invs = DB.invoices.filter(i => (i.collectionDate || i.date || '') >= startDate && (i.collectionDate || i.date || '') <= endDate);
     if (expStart || expEnd) {
       const eS = expStart || startDate;
       const eE = expEnd   || endDate;
@@ -6542,7 +6578,6 @@ function generateReport() {
   const totalCollected = fins.reduce((s,f)=>s+(f.paidAmount||0),0);
   const totalExpenses = exps.reduce((s,e)=>s+e.amount,0);
   const netProfit = totalCollected - totalExpenses;
-  const deliveredCount = dels.filter(d=>d.status==='delivered').length;
   const customers = [...new Set([...invs.map(i=>i.customerName), ...fins.map(f=>f.customer)])];
 
   const SEP = '═══════════════════════════════════════════';
@@ -6566,8 +6601,6 @@ function generateReport() {
   lines.push(`  Total Outstanding:             ${(totalFinRevenue-totalCollected).toLocaleString()} FCFA`);
   lines.push(`  Total Expenses:                ${totalExpenses.toLocaleString()} FCFA`);
   lines.push(`  Net Profit:                    ${netProfit.toLocaleString()} FCFA`);
-  lines.push(`  Laundries Delivered:           ${deliveredCount}`);
-  if (!byMonthName) lines.push(`  Pending Deliveries:            ${dels.filter(d=>d.status==='pending').length}`);
   lines.push('');
   lines.push(SEP);
   lines.push('\n  FINANCIAL RECORDS');
@@ -6608,20 +6641,6 @@ function generateReport() {
     lines.push(`  ${'TOTAL:'.padEnd(22)} | ${''.padEnd(10)} | ${totalFinRevenue.toLocaleString().padStart(10)} FCFA | Paid: ${totalCollected.toLocaleString().padStart(8)} | Bal: ${(totalFinRevenue-totalCollected).toLocaleString().padStart(8)} |`);
   }
   lines.push('');
-  // Deliveries section — shows collection dates per customer
-  if (dels.length > 0) {
-    lines.push(SEP);
-    lines.push('\n  LAUNDRY COLLECTIONS & DELIVERIES');
-    lines.push(sep2);
-    const sortedDels = [...dels].sort((a,b) => (a.collectionDate||'') < (b.collectionDate||'') ? -1 : 1);
-    sortedDels.forEach(d => {
-      const status = d.status === 'delivered' ? 'DELIVERED' : 'PENDING';
-      const collected = formatDate(d.collectionDate) || '—';
-      const delivered = d.deliveredDate ? formatDate(d.deliveredDate) : '—';
-      const svc = d.serviceTypes === 'wash_only' ? 'Wash Only' : d.serviceTypes === 'wash_iron' ? 'Wash & Iron' : 'Mixed';
-      lines.push(`  ${(d.customer||'').padEnd(22)} | Collected: ${collected.padEnd(12)} | ${svc.padEnd(12)} | ${status}${d.status === 'delivered' ? ' on ' + delivered : ''}`);
-    });
-  }
   lines.push('');
   if (exps.length > 0) {
     lines.push(SEP);
@@ -6669,10 +6688,185 @@ function generateReport() {
   showToast('Report generated ✓');
 }
 
+function generateDeliveriesReport() {
+  const startDate = (document.getElementById('report-del-start')?.value || '').trim();
+  const endDate   = (document.getElementById('report-del-end')?.value || '').trim();
+  const svcFilter = document.getElementById('report-del-service')?.value || 'all';
+  const stFilter  = document.getElementById('report-del-status')?.value  || 'all';
+
+  let dels = [...DB.deliveries];
+  if (startDate) dels = dels.filter(d => (d.collectionDate || '') >= startDate);
+  if (endDate)   dels = dels.filter(d => (d.collectionDate || '') <= endDate);
+  if (svcFilter !== 'all') dels = dels.filter(d => d.serviceTypes === svcFilter);
+  if (stFilter  !== 'all') dels = dels.filter(d => d.status === stFilter);
+
+  const pending   = dels.filter(d => d.status === 'pending').length;
+  const delivered = dels.filter(d => d.status === 'delivered').length;
+
+  const label = 'Collections & Deliveries Report' +
+    (startDate || endDate ? ' — ' + (startDate ? formatDate(startDate) : 'start') + ' to ' + (endDate ? formatDate(endDate) : 'today') : '');
+
+  window._reportLabel        = label;
+  window._reportIsDeliveries = true;
+  window._reportDelStartDate = startDate;
+  window._reportDelEndDate   = endDate;
+  window._reportDelSvcFilter = svcFilter;
+  window._reportDelStFilter  = stFilter;
+
+  const SEP  = '═══════════════════════════════════════════';
+  const sep2 = '───────────────────────────────────────────';
+  let lines  = [];
+  lines.push(`\n  WASHN' FOLD LAUNDRY SERVICES`);
+  lines.push(`  ${label}`);
+  if (startDate || endDate)
+    lines.push(`  Period: ${startDate ? formatDate(startDate) : 'start'} → ${endDate ? formatDate(endDate) : 'today'}`);
+  lines.push(`  Generated: ${new Date().toLocaleString()}\n`);
+  lines.push(SEP);
+  lines.push('\n  SUMMARY');
+  lines.push(sep2);
+  lines.push(`  Total Collections:             ${dels.length}`);
+  lines.push(`  Pending Deliveries:            ${pending}`);
+  lines.push(`  Delivered:                     ${delivered}`);
+  lines.push('');
+  lines.push(SEP);
+  lines.push('\n  COLLECTIONS & DELIVERIES');
+  lines.push(sep2);
+  if (dels.length === 0) {
+    lines.push('  No records found for the selected filters.');
+  } else {
+    const sorted = [...dels].sort((a, b) => (a.collectionDate || '') < (b.collectionDate || '') ? -1 : 1);
+    sorted.forEach(d => {
+      const statusStr = d.status === 'delivered' ? 'DELIVERED' : 'PENDING';
+      const svcStr    = d.serviceTypes === 'wash_only' ? 'Wash Only' : d.serviceTypes === 'wash_iron' ? 'Wash & Iron' : 'Mixed';
+      const collStr   = formatDate(d.collectionDate) || '—';
+      const dueStr    = formatDate(d.expectedDate)   || '—';
+      const delLine   = d.status === 'delivered' && d.deliveredDate ? ' (delivered ' + formatDate(d.deliveredDate) + ')' : '';
+      lines.push(`  ${(d.customer||'').padEnd(22)} | ${collStr.padEnd(14)} | ${svcStr.padEnd(12)} | Due: ${dueStr.padEnd(12)} | ${statusStr}${delLine}`);
+    });
+  }
+  lines.push('');
+  lines.push(SEP);
+  lines.push(`\n  END OF REPORT — Washn' Fold Laundry Services\n`);
+
+  const text = lines.join('\n');
+  document.getElementById('report-text').textContent = text;
+  document.getElementById('report-output-card').style.display = 'block';
+  logActivity('Report Generated', label, 'reports');
+  showToast('Report generated ✓');
+}
+
+function downloadDeliveriesReportPDF() {
+  if (!window.jspdf) { showToast('PDF library not loaded. Please wait and try again.', true); return; }
+  const { jsPDF } = window.jspdf;
+  const label      = window._reportLabel || 'Collections & Deliveries Report';
+  const startDate  = window._reportDelStartDate || null;
+  const endDate    = window._reportDelEndDate   || null;
+  const svcFilter  = window._reportDelSvcFilter || 'all';
+  const stFilter   = window._reportDelStFilter  || 'all';
+
+  let dels = [...DB.deliveries];
+  if (startDate) dels = dels.filter(d => (d.collectionDate || '') >= startDate);
+  if (endDate)   dels = dels.filter(d => (d.collectionDate || '') <= endDate);
+  if (svcFilter !== 'all') dels = dels.filter(d => d.serviceTypes === svcFilter);
+  if (stFilter  !== 'all') dels = dels.filter(d => d.status === stFilter);
+
+  const pending   = dels.filter(d => d.status === 'pending').length;
+  const delivered = dels.filter(d => d.status === 'delivered').length;
+
+  const doc = new jsPDF({ unit:'mm', format:'a4' });
+  const pageW = 210; const margin = 15; const cW = pageW - margin*2;
+  let y = 0;
+
+  function newPage() { doc.addPage(); y = 20; drawFooter(); }
+  function checkY(n=10) { if (y+n > 278) newPage(); }
+  function drawFooter() {
+    doc.setFontSize(7); doc.setFont('helvetica','normal'); doc.setTextColor(180,185,195);
+    doc.text("Washn' Fold Laundry Services — Collections & Deliveries Report", pageW/2, 290, {align:'center'});
+  }
+
+  // Header
+  doc.setFillColor(13,17,23); doc.rect(0,0,pageW,55,'F');
+  doc.setFillColor(78,205,196); doc.rect(0,0,pageW,4,'F');
+  doc.setFillColor(78,205,196); doc.rect(0,51,pageW,4,'F');
+  doc.setTextColor(78,205,196); doc.setFontSize(22); doc.setFont('helvetica','bold');
+  doc.text("WASHN' FOLD", pageW/2, 20, {align:'center'});
+  doc.setFontSize(10); doc.setFont('helvetica','normal'); doc.setTextColor(200,210,220);
+  doc.text('LAUNDRY SERVICES', pageW/2, 27, {align:'center'});
+  doc.setFontSize(13); doc.setFont('helvetica','bold'); doc.setTextColor(255,255,255);
+  doc.text('COLLECTIONS & DELIVERIES REPORT', pageW/2, 38, {align:'center'});
+  doc.setFontSize(8); doc.setFont('helvetica','normal'); doc.setTextColor(160,170,185);
+  const periodText = (startDate || endDate) ? ((startDate ? formatDate(startDate) : 'start') + ' — ' + (endDate ? formatDate(endDate) : 'today')) : 'All Records';
+  doc.text(periodText, pageW/2, 45, {align:'center'});
+  doc.text(`Generated: ${new Date().toLocaleString()}`, pageW-margin, 48, {align:'right'});
+  y = 66;
+
+  // Summary box
+  doc.setFillColor(240,242,248); doc.roundedRect(margin,y,cW,28,2,2,'F');
+  doc.setDrawColor(220,225,235); doc.setLineWidth(0.5); doc.roundedRect(margin,y,cW,28,2,2,'S');
+  doc.setFontSize(9); doc.setFont('helvetica','bold'); doc.setTextColor(80,90,110);
+  doc.text('SUMMARY', margin+4, y+7);
+  const sumData = [['Total Collections:', dels.length], ['Pending Deliveries:', pending], ['Delivered:', delivered]];
+  let sx = y+15;
+  sumData.forEach((row, i) => {
+    const cx = i < 2 ? margin+4 : margin+cW/2+4;
+    const ry = sx + (i % 2) * 7;
+    doc.setFontSize(8); doc.setFont('helvetica','normal'); doc.setTextColor(90,100,120);
+    doc.text(row[0], cx, ry);
+    doc.setFont('helvetica','bold'); doc.setTextColor(26,26,46);
+    doc.text(String(row[1]), cx+55, ry);
+  });
+  y += 36;
+
+  // Table
+  checkY(20);
+  doc.setFontSize(10); doc.setFont('helvetica','bold'); doc.setTextColor(26,26,46);
+  doc.text('COLLECTIONS & DELIVERIES', margin, y); y+=5;
+  doc.setDrawColor(78,205,196); doc.setLineWidth(1); doc.line(margin,y,margin+80,y); y+=6;
+  doc.setFillColor(26,26,46); doc.rect(margin,y,cW,8,'F');
+  doc.setFontSize(7.5); doc.setFont('helvetica','bold'); doc.setTextColor(255,255,255);
+  const dCols = ['Customer','Service','Collected','Delivery Due','Status'];
+  const dColW = [42,26,26,28,38];
+  let dx = margin+2;
+  dCols.forEach(function(c,i){ doc.text(c,dx,y+5.5); dx+=dColW[i]; });
+  y+=10;
+
+  if (dels.length === 0) {
+    checkY(8);
+    doc.setFontSize(8); doc.setFont('helvetica','italic'); doc.setTextColor(140,150,165);
+    doc.text('No records found for the selected filters.', margin+4, y+5);
+    y+=10;
+  } else {
+    const sorted = [...dels].sort(function(a,b){ return (a.collectionDate||'') < (b.collectionDate||'') ? -1 : 1; });
+    sorted.forEach(function(d,idx){
+      checkY(8);
+      if(idx%2===0){ doc.setFillColor(248,249,252); doc.rect(margin,y,cW,7,'F'); }
+      doc.setFontSize(8); doc.setFont('helvetica','normal'); doc.setTextColor(40,50,70);
+      dx=margin+2;
+      const svcStr    = d.serviceTypes==='wash_only'?'Wash Only':d.serviceTypes==='wash_iron'?'Wash & Iron':'Mixed';
+      const collStr   = formatDate(d.collectionDate)||'—';
+      const dueStr    = formatDate(d.expectedDate)||'—';
+      const statusStr = d.status==='delivered'?'Delivered':'Pending';
+      const statusCol = d.status==='delivered'?[40,167,69]:[255,130,0];
+      [(d.customer||'').substring(0,24), svcStr, collStr, dueStr].forEach(function(v,i){ doc.text(v,dx,y+5); dx+=dColW[i]; });
+      doc.setTextColor(...statusCol); doc.setFont('helvetica','bold');
+      const delivLine = d.status==='delivered'&&d.deliveredDate ? statusStr+' '+formatDate(d.deliveredDate) : statusStr;
+      doc.text(delivLine, dx, y+5);
+      doc.setTextColor(40,50,70); doc.setFont('helvetica','normal');
+      y+=7;
+    });
+  }
+  y+=6;
+  drawFooter();
+  doc.save(`WashnFold_Collections_${new Date().toISOString().split('T')[0]}.pdf`);
+  logActivity('Report Downloaded', label + ' — PDF', 'reports');
+  showToast('Collections & Deliveries PDF downloaded ✓');
+}
+
 function copyReport() { navigator.clipboard.writeText(document.getElementById('report-text').textContent).then(()=>showToast('Report copied ✓')); }
 
 function downloadReportPDF() {
   if (!window.jspdf) { showToast('PDF library not loaded. Please wait and try again.', true); return; }
+  if (window._reportIsDeliveries) { downloadDeliveriesReportPDF(); return; }
   const { jsPDF } = window.jspdf;
   const label = window._reportLabel || 'Business Report';
   const startDate = window._reportStartDate || null;
@@ -6688,12 +6882,9 @@ function downloadReportPDF() {
     invs = DB.invoices;
     dels = DB.deliveries;
   } else if (startDate) {
-    fins = DB.finance.filter(f => {
-      const effectiveDate = f.dateModified || f.date || '';
-      return effectiveDate >= startDate && effectiveDate <= endDate;
-    });
+    fins = DB.finance.filter(f => (f.date || '') >= startDate && (f.date || '') <= endDate);
     exps = storedExps || DB.expenses.filter(e => e.date >= startDate && e.date <= endDate);
-    invs = DB.invoices.filter(i => i.date >= startDate && i.date <= endDate);
+    invs = DB.invoices.filter(i => (i.collectionDate || i.date || '') >= startDate && (i.collectionDate || i.date || '') <= endDate);
     dels = DB.deliveries.filter(d => d.collectionDate >= startDate && d.collectionDate <= endDate);
   } else {
     fins = DB.finance; exps = storedExps || DB.expenses; invs = DB.invoices; dels = DB.deliveries;
@@ -6746,7 +6937,6 @@ function downloadReportPDF() {
     ['Outstanding (FCFA):', totalOutstanding.toLocaleString()],
     ['Total Expenses (FCFA):', totalExpenses.toLocaleString()],
     ['Net Profit (FCFA):', netProfit.toLocaleString()],
-    ['Deliveries Completed:', dels.filter(d=>d.status==='delivered').length],
   ];
   let sy = y+13;
   summaryData.forEach((row, i) => {
@@ -6814,39 +7004,6 @@ function downloadReportPDF() {
   doc.setTextColor(...npColor);
   doc.text(`Net Profit: ${netProfit.toLocaleString()} FCFA`, margin+cW-3,y+5.5,{align:'right'});
   y+=16;
-
-  // Laundry Collections & Deliveries table
-  if (dels.length > 0) {
-    checkY(20);
-    doc.setFontSize(10); doc.setFont('helvetica','bold'); doc.setTextColor(26,26,46);
-    doc.text('LAUNDRY COLLECTIONS & DELIVERIES', margin, y); y+=5;
-    doc.setDrawColor(78,205,196); doc.setLineWidth(1); doc.line(margin,y,margin+80,y); y+=6;
-    doc.setFillColor(26,26,46); doc.rect(margin,y,cW,8,'F');
-    doc.setFontSize(7.5); doc.setFont('helvetica','bold'); doc.setTextColor(255,255,255);
-    const dCols=['Customer','Service','Collected','Delivery Due','Status'];
-    const dColW=[42,26,26,28,38];
-    let dx=margin+2;
-    dCols.forEach(function(c,i){ doc.text(c,dx,y+5.5); dx+=dColW[i]; });
-    y+=10;
-    const sortedDelsP = [...dels].sort(function(a,b){ return (a.collectionDate||'') < (b.collectionDate||'') ? -1 : 1; });
-    sortedDelsP.forEach(function(d,idx){
-      checkY(8);
-      if(idx%2===0){ doc.setFillColor(248,249,252); doc.rect(margin,y,cW,7,'F'); }
-      doc.setFontSize(8); doc.setFont('helvetica','normal'); doc.setTextColor(40,50,70);
-      dx=margin+2;
-      const svcStr = d.serviceTypes==='wash_only'?'Wash Only':d.serviceTypes==='wash_iron'?'Wash & Iron':'Mixed';
-      const statusStr = d.status==='delivered' ? 'Delivered' : 'Pending';
-      const statusCol = d.status==='delivered' ? [40,167,69] : [255,130,0];
-      const dVals = [(d.customer||'').substring(0,24), svcStr, formatDate(d.collectionDate)||'—', formatDate(d.expectedDate)||'—'];
-      dVals.forEach(function(v,i){ doc.text(v,dx,y+5); dx+=dColW[i]; });
-      doc.setTextColor(...statusCol); doc.setFont('helvetica','bold');
-      const deliveredLine = d.status==='delivered' && d.deliveredDate ? statusStr+' '+formatDate(d.deliveredDate) : statusStr;
-      doc.text(deliveredLine, dx, y+5);
-      doc.setTextColor(40,50,70); doc.setFont('helvetica','normal');
-      y+=7;
-    });
-    y+=6;
-  }
 
   // Expenses table
   if (exps.length > 0 && !byMonthName) {
