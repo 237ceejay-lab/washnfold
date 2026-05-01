@@ -2726,9 +2726,15 @@ function mergeLoadedData(loaded, opts) {
     DB.recycleBin = _merged;
   }
   if (Array.isArray(loaded.appDownloads)) {
-    DB.appDownloads = loaded.appDownloads.filter(d =>
-      d && typeof d === 'object' && d.id && d.filename
-    );
+    // Firebase only stores metadata (json field stripped to stay under 1 MiB).
+    // Merge: for entries already in memory with their json blob, keep the in-memory version.
+    const _memJsonMap = new Map((DB.appDownloads || []).filter(d => d && d.id && d.json).map(d => [d.id, d.json]));
+    DB.appDownloads = loaded.appDownloads
+      .filter(d => d && typeof d === 'object' && d.id && d.filename)
+      .map(function(d) {
+        const memJson = _memJsonMap.get(d.id);
+        return memJson ? Object.assign({}, d, { json: memJson }) : d;
+      });
   }
 
   // ── Credentials: loaded file always wins over in-code defaults ─────
@@ -2902,6 +2908,13 @@ function _performLogout(isAuto) {
   }
   if (Array.isArray(saveObj.activityLog) && saveObj.activityLog.length > 300) {
     saveObj.activityLog = saveObj.activityLog.slice(-300);
+  }
+  if (Array.isArray(saveObj.appDownloads)) {
+    saveObj.appDownloads = saveObj.appDownloads.map(function(dl) {
+      const out = Object.assign({}, dl);
+      delete out.json;
+      return out;
+    });
   }
   const jsonStr = JSON.stringify(saveObj);
   if (window._fbSetData) {
@@ -5554,7 +5567,7 @@ function _saveLogToDownloadsFolder() {
     customerHistory: DB.customerHistory,
     deletedSeedIds: DB.deletedSeedIds || []
   };
-  const json = JSON.stringify(logData, null, 2);
+  const json = JSON.stringify(logData);
   const sizeKB = Math.round(json.length / 1024);
   DB.appDownloads.unshift({
     id: 'dl_' + Date.now(),
@@ -5668,8 +5681,11 @@ function renderDownloadsFolder() {
           ${summary ? `<div style="font-size:0.7rem;color:var(--muted);margin-top:0.2rem;font-family:'DM Mono',monospace;">${escHtml(summary)}</div>` : ''}
         </div>
         <div style="display:flex;flex-direction:column;gap:0.4rem;flex-shrink:0;min-width:120px;">
-          <button class="btn btn-sm" style="background:rgba(81,207,102,0.12);border:1px solid rgba(81,207,102,0.35);color:var(--success);justify-content:center;" onclick="downloadLogFile('${dl.id}')">⬇ Download</button>
-          <button class="btn btn-sm" style="background:rgba(78,205,196,0.12);border:1px solid rgba(78,205,196,0.35);color:var(--accent2);justify-content:center;" onclick="importLogFromDownloads('${dl.id}')">↩ Import</button>
+          ${dl.json
+            ? `<button class="btn btn-sm" style="background:rgba(81,207,102,0.12);border:1px solid rgba(81,207,102,0.35);color:var(--success);justify-content:center;" onclick="downloadLogFile('${dl.id}')">⬇ Download</button>
+               <button class="btn btn-sm" style="background:rgba(78,205,196,0.12);border:1px solid rgba(78,205,196,0.35);color:var(--accent2);justify-content:center;" onclick="importLogFromDownloads('${dl.id}')">↩ Import</button>`
+            : `<div style="font-size:0.68rem;color:var(--muted);font-family:'DM Mono',monospace;padding:0.2rem 0;text-align:center;line-height:1.4;">📵 File on<br>other device</div>`
+          }
           <button class="btn btn-sm btn-danger" style="justify-content:center;font-size:0.72rem;" onclick="deleteDownloadEntry('${dl.id}')">✕ Delete</button>
         </div>
       </div>
@@ -5681,6 +5697,10 @@ function downloadLogFile(dlId) {
   if (!_canAccessDownloads()) { showToast('Access denied.', true); return; }
   const dl = (DB.appDownloads || []).find(d => d.id === dlId);
   if (!dl) { showToast('File not found.', true); return; }
+  if (!dl.json) {
+    showToast('File content not available on this device. It was saved on another device or a previous session. Use "💾 Save Log Now" to create a fresh backup.', true);
+    return;
+  }
   const blob = new Blob([dl.json], { type: 'application/json' });
   const a = document.createElement('a');
   a.href = URL.createObjectURL(blob);
@@ -5696,6 +5716,10 @@ function importLogFromDownloads(dlId) {
   if (!_canAccessDownloads()) { showToast('Access denied.', true); return; }
   const dl = (DB.appDownloads || []).find(d => d.id === dlId);
   if (!dl) { showToast('File not found.', true); return; }
+  if (!dl.json) {
+    showToast('File content not available on this device. Download a fresh backup first.', true);
+    return;
+  }
   const warning = `⚠️ IMPORT WARNING\n\nImporting this backup will OVERWRITE current app data with the data from:\n\n"${dl.filename}"\nSaved: ${new Date(dl.savedAt).toLocaleString()}\n\nThis will replace all invoices, finance records, deliveries, expenses and more with the data from this backup.\n\nYour current data will be LOST unless you first save a fresh backup.\n\nDo you want to proceed?`;
   if (!confirm(warning)) return;
   if (!confirm('FINAL CONFIRMATION: Are you absolutely sure? This action cannot be undone.')) return;
@@ -8426,6 +8450,16 @@ async function _doCloudSave() {
     // 3. Trim activityLog — keep only the 300 most recent entries
     if (Array.isArray(saveObj.activityLog) && saveObj.activityLog.length > 300) {
       saveObj.activityLog = saveObj.activityLog.slice(-300);
+    }
+    // 4. Strip large json blobs from appDownloads — each entry can be 1–2 MB.
+    //    Only metadata (id, filename, savedAt, size, type) is saved to Firebase.
+    //    The actual file content is already on the device from the auto-download.
+    if (Array.isArray(saveObj.appDownloads)) {
+      saveObj.appDownloads = saveObj.appDownloads.map(function(dl) {
+        const out = Object.assign({}, dl);
+        delete out.json;
+        return out;
+      });
     }
 
     const jsonStr = JSON.stringify(saveObj);
