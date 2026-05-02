@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Washn' Fold — Management System V14</title>
+<title>Washn' Fold — Management System V15</title>
 
 <!-- Fonts: try Google Fonts first, fall back to system fonts gracefully on blocked networks -->
 <!-- Fonts loaded non-blocking — page renders instantly even if fonts.googleapis.com
@@ -606,7 +606,7 @@ body.mobile-view .card-title-row { flex-direction: column; align-items: flex-sta
   <div class="login-box">
     <div style="font-family:'DM Mono',monospace;font-size:0.7rem;letter-spacing:0.3em;color:var(--accent);margin-bottom:0.5rem;">✦ WASHN' FOLD</div>
     <h1>Management</h1>
-    <p class="sub">Laundry Service Software v14.0</p>
+    <p class="sub">Laundry Service Software v15.0</p>
     <div id="login-form">
       <div class="form-group" style="margin-bottom:1rem;text-align:left;">
         <label>Username</label>
@@ -1877,7 +1877,7 @@ body.mobile-view .card-title-row { flex-direction: column; align-items: flex-sta
       <div class="card-title">🔑 Delegate Downloads Access</div>
       <p style="font-size:0.82rem;color:var(--muted);margin-bottom:0.8rem;">Grant admin/staff accounts access to this folder. Super User always has access.</p>
       <div id="delegate-access-list"></div>
-      <button class="btn btn-secondary btn-sm" style="margin-top:0.8rem;" onclick="saveData();showToast('Access settings saved ✓');">💾 Save Settings</button>
+      <button class="btn btn-secondary btn-sm" style="margin-top:0.8rem;" onclick="saveData(true).then(saved => { if (saved) showToast('Access settings saved ✓'); else showToast('Save failed — access settings may not persist.', true); });">💾 Save Settings</button>
     </div>
   </div>
 
@@ -1978,6 +1978,13 @@ body.mobile-view .card-title-row { flex-direction: column; align-items: flex-sta
         <input type="number" id="su-inactivity-mins" min="1" max="120" placeholder="5">
       </div>
     </div>
+    <div class="form-group" style="margin-bottom:1rem;">
+      <label style="display:flex;align-items:center;gap:0.5rem;cursor:pointer;">
+        <input type="checkbox" id="su-force-logout-toggle" style="cursor:pointer;">
+        <span>Enable Force Auto-Logout</span>
+      </label>
+      <div style="font-size:0.76rem;color:var(--muted);margin-top:0.4rem;">When enabled, the app logs out inactive users after the configured timeout. Default is disabled.</div>
+    </div>
     <button class="btn btn-primary" onclick="saveSuEmailSettings()">💾 Save Email Settings</button>
     <div style="margin-top:0.9rem;font-size:0.75rem;color:var(--muted);line-height:1.7;">
       <span id="su-daily-status">⏳ Daily auto-email: checking...</span><br>
@@ -2016,7 +2023,7 @@ body.mobile-view .card-title-row { flex-direction: column; align-items: flex-sta
       </label>
     </div>
     <div id="su-bin-delegate-list"></div>
-    <button class="btn btn-secondary btn-sm" style="margin-top:0.8rem;" onclick="saveData();showToast('Bin access settings saved ✓');">💾 Save Bin Access</button>
+    <button class="btn btn-secondary btn-sm" style="margin-top:0.8rem;" onclick="saveData(true).then(saved => { if (saved) showToast('Bin access settings saved ✓'); else showToast('Save failed — bin access settings may not persist.', true); });">💾 Save Bin Access</button>
   </div>
 
   <!-- ══ AUTO-DOWNLOAD CONTROLS ══ -->
@@ -2321,7 +2328,8 @@ let DB = {
     localDownloadIntervalHours: 24,
     inAppDownloadIntervalHours: 24,
     autoDownloadAccounts: ["superuser","manager","admin"],
-    autoDownloadLocalAccounts: ["superuser","manager","admin"]
+    autoDownloadLocalAccounts: ["superuser","manager","admin"],
+    forceAutoLogout: false
   },
   prices: {
     light_dresses:     { label:'Light Dresses',               wo_colored:100, wo_white:150, wi_colored_casual:200, wi_colored_formal:250, wi_white:250 },
@@ -2659,7 +2667,7 @@ function mergeLoadedData(loaded, opts) {
   //  • loading a newer file into an older app  → unknown fields are preserved via spread/assign (fine)
   //  • loading a file from a very different major version → warn the user, but still load
   const _loadedVer   = parseFloat(loaded._appVersion) || 0;
-  const _currentVer  = parseFloat('14.0');
+  const _currentVer  = parseFloat('15.0');
   if (_loadedVer > _currentVer + 1) {
     // File is from a significantly newer version — warn, but do not block
     setTimeout(() => showToast('⚠ Backup from a newer app version (v' + loaded._appVersion + '). Some features may differ.', true), 500);
@@ -2768,6 +2776,7 @@ function mergeLoadedData(loaded, opts) {
     if (!Array.isArray(DB.settings.downloadsAccessList)) DB.settings.downloadsAccessList = [];
     if (DB.settings.lastDailyLogDate === undefined) DB.settings.lastDailyLogDate = null;
     if (DB.settings.inactivityMins === undefined) DB.settings.inactivityMins = 5;
+    if (DB.settings.forceAutoLogout === undefined) DB.settings.forceAutoLogout = false;
     // ── v12 migration: auto-download controls ────────────────────────
     if (typeof DB.settings.localDownloadIntervalHours !== 'number' || DB.settings.localDownloadIntervalHours < 0)
       DB.settings.localDownloadIntervalHours = 24;
@@ -2885,7 +2894,7 @@ function _performLogout(isAuto) {
   showToast('Logging out ✓');
   const saveObj = {
     ...DB,
-    _appVersion: '14.0',
+    _appVersion: '15.0',
     _savedAt: new Date().toISOString(),
     deletedSeedIds: DB.deletedSeedIds || [],
     settings: { ...DB.settings },
@@ -3053,7 +3062,7 @@ function initEmailJS() {
 function buildFullBackupBlob() {
   const saveObj = {
     ...DB,
-    _appVersion: '14.0',
+    _appVersion: '15.0',
     _savedAt: new Date().toISOString(),
     _type: 'full_backup'
   };
@@ -3248,6 +3257,10 @@ function updateEmailStatusUI() {
 
 // ── Inactivity auto-logout ──────────────────────────────────────────
 function resetInactivityTimer() {
+  if (!_appDataReady || !DB.settings.forceAutoLogout) {
+    if (_inactivityTimer) { clearTimeout(_inactivityTimer); _inactivityTimer = null; }
+    return;
+  }
   if (_inactivityTimer) clearTimeout(_inactivityTimer);
   const mins = parseInt(DB.settings.inactivityMins) || 5;
   _inactivityTimer = setTimeout(() => {
@@ -3257,6 +3270,11 @@ function resetInactivityTimer() {
 }
 
 function startInactivityTracking() {
+  if (!DB.settings.forceAutoLogout) {
+    stopInactivityTracking();
+    return;
+  }
+  stopInactivityTracking();
   ['mousemove','keydown','mousedown','touchstart','scroll'].forEach(evt => {
     document.addEventListener(evt, resetInactivityTimer, {passive: true});
   });
@@ -3458,7 +3476,7 @@ function initApp() {
   checkRemindersAndAlerts();
   if (_reminderIntervalId) clearInterval(_reminderIntervalId);
   _reminderIntervalId = setInterval(checkRemindersAndAlerts, 60000);
-  startInactivityTracking();
+  if (DB.settings.forceAutoLogout) startInactivityTracking();
   initEmailJS();
   scheduleDailyEmail();
 
@@ -3523,11 +3541,8 @@ function initApp() {
     }
   });
 
-  // ── Periodic auto-save every 15 seconds ──
-  if (window._periodicSaveTimer) clearInterval(window._periodicSaveTimer);
-  window._periodicSaveTimer = setInterval(function() {
-    if (currentAccountUsername) saveData(); // debounced cloud save
-  }, 15000);
+  // ── Periodic auto-save has been disabled in favor of explicit action-based saving.
+  if (window._periodicSaveTimer) { clearInterval(window._periodicSaveTimer); window._periodicSaveTimer = null; }
 
   // ── Listen for remote data changes (another user saved something) ──
   if (window._fbListenData) {
@@ -4194,7 +4209,9 @@ function generateInvoice() {
   }
 
   renderAll();
-  saveData(true); // immediate save — critical action
+  saveData(true).then(saved => {
+    if (!saved) showToast('Invoice save failed — please retry.', true);
+  });
   window.scrollTo(0, 0);
 }
 
@@ -4868,7 +4885,9 @@ function addManualFinRecord() {
   document.getElementById('mfin-date').value = '';
   renderFinance();
   renderOverview();
-  saveData(true); // immediate save
+  saveData(true).then(saved => {
+    if (!saved) showToast('Financial record save failed — please retry.', true);
+  });
   showToast('Financial record added for ' + customer + ' \u2713');
   logActivity('Manual Finance', `${customer} — ${amount.toLocaleString()} FCFA`, 'finance');
 }
@@ -5547,7 +5566,7 @@ function _saveLogToDownloadsFolder() {
   const filename = 'WashnFold_Log_' + ts.slice(0,10) + '_' + String(now.getHours()).padStart(2,'0') + 'h' + String(now.getMinutes()).padStart(2,'0') + '.json';
   const logData = {
     _type: 'app_log_backup',
-    _appVersion: '14.0',
+    _appVersion: '15.0',
     _savedAt: ts,
     _savedBy: currentAccountUsername || 'system',
     _savedByType: currentAccountType || 'unknown',
@@ -7560,14 +7579,21 @@ function saveSuEmailSettings() {
   if (service) DB.settings.emailjsServiceId = service;
   if (template) DB.settings.emailjsTemplateId = template;
 
-  logActivity('Settings', `Updated email settings. EmailJS: ${isEmailJSConfigured() ? 'configured' : 'not configured'}`);
-  saveData();
-  resetInactivityTimer();
+  const forceLogoutEnabled = document.getElementById('su-force-logout-toggle')?.checked;
+  DB.settings.forceAutoLogout = !!forceLogoutEnabled;
+  logActivity('Settings', `Updated email and auto-logout settings. Auto-logout: ${DB.settings.forceAutoLogout ? 'enabled' : 'disabled'}. EmailJS: ${isEmailJSConfigured() ? 'configured' : 'not configured'}`);
+  saveData(true).then(saved => {
+    if (saved) {
+      showToast('Email settings saved ✓');
+    } else {
+      showToast('Save failed — email/auto-logout settings may not persist.', true);
+    }
+  });
+  if (DB.settings.forceAutoLogout) startInactivityTracking(); else stopInactivityTracking();
   // Re-init EmailJS and restart daily scheduler with new keys
   initEmailJS();
   scheduleDailyEmail();
   updateEmailStatusUI();
-  showToast('Email settings saved ✓');
 }
 
 function loadSuEmailSettings() {
@@ -7581,6 +7607,8 @@ function loadSuEmailSettings() {
   if (pubkeyEl) pubkeyEl.value = DB.settings.emailjsPublicKey || '';
   if (serviceEl) serviceEl.value = DB.settings.emailjsServiceId || '';
   if (templateEl) templateEl.value = DB.settings.emailjsTemplateId || '';
+  const forceToggleEl = document.getElementById('su-force-logout-toggle');
+  if (forceToggleEl) forceToggleEl.checked = !!DB.settings.forceAutoLogout;
   updateEmailStatusUI();
   loadAutoDownloadSettingsUI();
 }
@@ -8164,8 +8192,13 @@ function saveAdminSettings() {
   else if (p && p.length > 0) { showToast('Admin password must be at least 4 characters.', true); return; }
   document.getElementById('set-admin-pass').value = '';
   logActivity('Settings', 'Updated legacy admin credentials');
-  saveData();
-  showToast('Admin settings saved ✓');
+  saveData(true).then(saved => {
+    if (saved) {
+      showToast('Admin settings saved ✓');
+    } else {
+      showToast('Save failed — admin settings may not persist.', true);
+    }
+  });
 }
 
 function logAdminActivity(action, detail) {
@@ -8175,7 +8208,7 @@ function logAdminActivity(action, detail) {
 function saveAdminDataPackage() {
   const pkg = {
     _type: 'admin_data_package',
-    _appVersion: '14.0',
+    _appVersion: '15.0',
     _exportedAt: new Date().toISOString(),
     _adminUser: DB.adminCredentials.username,
     // All data arrays — complete snapshot
@@ -8380,21 +8413,18 @@ let _autoSaveTimer = null;
 let _autoSaveTimer2 = null;
 function saveData(immediate) {
   // Guard: never save before real data is loaded
-  if (!window._appDataReady) return;
+  if (!window._appDataReady) return Promise.resolve(false);
 
   // Stamp _loginDataSavedAt immediately so any stale Firebase onSnapshot that was
-  // in-flight before this save is rejected — even during the 800ms debounce window.
+  // in-flight before this save is rejected.
   window._loginDataSavedAt = new Date().toISOString();
+  clearTimeout(_autoSaveTimer);
+  clearTimeout(_autoSaveTimer2);
 
-  // Firebase only — no localStorage
-  if (immediate) {
-    clearTimeout(_autoSaveTimer);
-    clearTimeout(_autoSaveTimer2);
-    _doCloudSave();
-  } else {
-    clearTimeout(_autoSaveTimer);
-    _autoSaveTimer = setTimeout(_doCloudSave, 800);
+  if (immediate === false) {
+    return Promise.resolve(false);
   }
+  return _doCloudSave();
 }
 
 function _getSaveFailReason() {
@@ -8418,7 +8448,7 @@ async function _doCloudSave() {
     window._loginDataSavedAt = _nowISO;
     const saveObj = {
       ...DB,
-      _appVersion: '14.0',
+      _appVersion: '15.0',
       _savedAt: _nowISO,
       deletedSeedIds: DB.deletedSeedIds || [],
       settings: { ...DB.settings },
@@ -8426,34 +8456,25 @@ async function _doCloudSave() {
     };
 
     // ── Trim payload to stay under Firestore's 1 MiB document limit ──────────
-    // 1. Strip invoiceText from each invoice — regenerated on demand from items
     if (Array.isArray(saveObj.invoices)) {
       saveObj.invoices = saveObj.invoices.map(function(inv) {
         const out = Object.assign({}, inv);
-        // Only strip invoiceText if items are present — it can then be regenerated on demand.
-        // Label-only invoices (no items) keep their invoiceText since it cannot be rebuilt.
         if (Array.isArray(inv.items) && inv.items.length > 0) delete out.invoiceText;
         return out;
       });
     }
-    // 2. Exclude HTML-hardcoded seed finance records that haven't been modified
-    //    (they'll be re-added by _loadSeedData() on every load)
     if (Array.isArray(saveObj.finance) && window._seedDefaultsMap) {
       saveObj.finance = saveObj.finance.filter(function(r) {
         if (!r.id || !r.id.startsWith('fin_seed_')) return true;
         const def = window._seedDefaultsMap[r.id];
-        if (!def) return true; // not in HTML seeds → keep in cloud
+        if (!def) return true;
         return (r.paidAmount !== def.paidAmount || r.status !== def.status ||
                 r.amount !== def.amount || r.paymentMethod !== def.paymentMethod);
       });
     }
-    // 3. Trim activityLog — keep only the 300 most recent entries
     if (Array.isArray(saveObj.activityLog) && saveObj.activityLog.length > 300) {
       saveObj.activityLog = saveObj.activityLog.slice(-300);
     }
-    // 4. Strip large json blobs from appDownloads — each entry can be 1–2 MB.
-    //    Only metadata (id, filename, savedAt, size, type) is saved to Firebase.
-    //    The actual file content is already on the device from the auto-download.
     if (Array.isArray(saveObj.appDownloads)) {
       saveObj.appDownloads = saveObj.appDownloads.map(function(dl) {
         const out = Object.assign({}, dl);
@@ -8463,66 +8484,79 @@ async function _doCloudSave() {
     }
 
     const jsonStr = JSON.stringify(saveObj);
-
     const ind = document.getElementById('autosave-indicator');
     const lsd = document.getElementById('last-saved-display');
     if (lsd) lsd.textContent = new Date().toLocaleTimeString();
 
-    if (!window._fbSetData) return;
+    if (!window._fbSetData) {
+      if (ind) {
+        ind.textContent = '⚠ Cloud unavailable';
+        ind.style.color = 'var(--danger)';
+        ind.style.display = 'inline'; ind.style.opacity = '1';
+        clearTimeout(ind._hideTimer);
+      }
+      return false;
+    }
 
-    // Show "Saving…" while write is in-flight
     if (ind) {
       ind.textContent = '⏳ Saving…'; ind.style.color = 'var(--muted)';
       ind.style.display = 'inline'; ind.style.opacity = '1';
       clearTimeout(ind._hideTimer);
     }
 
-    // After 15s with no response (slow MTN network), update label but keep waiting —
-    // Firebase still resolves eventually and the final result (✓ Saved / ⚠ failed) will show.
     const _fbSaveTimeout = setTimeout(function() {
-      if (ind && (ind.textContent === '⏳ Saving…')) {
+      if (ind && ind.textContent === '⏳ Saving…') {
         ind.textContent = '⏳ Slow connection…'; ind.style.color = 'var(--accent)';
       }
     }, 15000);
 
     window._fbSavePending = true;
-    window._fbSetData(jsonStr)
-      .then(function(ok) {
-        clearTimeout(_fbSaveTimeout);
-        window._fbSavePending = false;
-        if (ok) {
-          if (ind) {
-            ind.textContent = '✓ Saved'; ind.style.color = 'var(--success)';
-            ind.style.display = 'inline'; ind.style.opacity = '1';
-            clearTimeout(ind._hideTimer);
-            ind._hideTimer = setTimeout(() => { ind.style.opacity = '0'; setTimeout(() => { ind.style.display = ''; }, 400); }, 2200);
-          }
-        } else {
-          if (ind) {
-            const _reason = _getSaveFailReason();
-            ind.textContent = _reason ? '⚠ ' + _reason : '⚠ Save failed';
-            ind.style.color = 'var(--danger)';
-            ind.style.display = 'inline'; ind.style.opacity = '1';
-            clearTimeout(ind._hideTimer);
-          }
-        }
-      })
-      .catch(function(caughtErr) {
-        clearTimeout(_fbSaveTimeout);
-        window._fbSavePending = false;
-        if (ind) {
-          const _reason = !navigator.onLine ? 'No internet connection' : _getSaveFailReason();
-          ind.textContent = _reason ? '⚠ ' + _reason : '⚠ Save failed';
-          ind.style.color = 'var(--danger)';
-          ind.style.display = 'inline'; ind.style.opacity = '1';
-          clearTimeout(ind._hideTimer);
-        }
-      });
-  } catch(e) {}
+    let ok = false;
+    try {
+      ok = await window._fbSetData(jsonStr);
+    } catch (caughtErr) {
+      ok = false;
+    } finally {
+      clearTimeout(_fbSaveTimeout);
+      window._fbSavePending = false;
+    }
+
+    if (ok) {
+      if (ind) {
+        ind.textContent = '✓ Saved'; ind.style.color = 'var(--success)';
+        ind.style.display = 'inline'; ind.style.opacity = '1';
+        clearTimeout(ind._hideTimer);
+        ind._hideTimer = setTimeout(() => {
+          ind.style.opacity = '0';
+          setTimeout(() => { ind.style.display = ''; }, 400);
+        }, 2200);
+      }
+      return true;
+    }
+
+    if (ind) {
+      const _reason = _getSaveFailReason();
+      ind.textContent = _reason ? '⚠ ' + _reason : '⚠ Save failed';
+      ind.style.color = 'var(--danger)';
+      ind.style.display = 'inline'; ind.style.opacity = '1';
+      clearTimeout(ind._hideTimer);
+    }
+    return false;
+  } catch (e) {
+    const ind = document.getElementById('autosave-indicator');
+    if (ind) {
+      const _reason = _getSaveFailReason() || 'Save failed';
+      ind.textContent = '⚠ ' + _reason;
+      ind.style.color = 'var(--danger)';
+      ind.style.display = 'inline'; ind.style.opacity = '1';
+      clearTimeout(ind._hideTimer);
+    }
+    return false;
+  }
 }
 
 function exportDataBackup() {
-  const saveObj = { ...DB, _appVersion: '14.0', _savedAt: new Date().toISOString(),
+  const saveObj = { ...DB, _appVersion: '15.0', _savedAt: new Date().toISOString(),
     _schema: { invoiceFields: ['id','date','customerName','collectionDate','deliveryDate','items','total','paymentStatus','paidAmount','serviceTypes','invoiceText'],
                financeFields: ['id','customer','month','amount','paidAmount','status','paymentMethod','date','invoiceId'],
                deliveryFields: ['id','invoiceId','customer','serviceTypes','collectionDate','expectedDate','status','deliveredDate'] } };
@@ -8532,7 +8566,7 @@ function exportDataBackup() {
   const dateStr = new Date().toISOString().split('T')[0];
   a.download = `WashnFold_Backup_${dateStr}.json`;
   a.click();
-  logActivity('Data Backup', `Full data backup downloaded (v14.0)`, 'settings');
+  logActivity('Data Backup', `Full data backup downloaded (v15.0)`, 'settings');
   showToast('Backup downloaded ✓');
 }
 
@@ -10734,7 +10768,9 @@ function aiConfirmImport() {
   }
 
   renderAll();
-  saveData(true);
+  saveData(true).then(saved => {
+    if (!saved) showToast('Imported invoice save failed — check your connection.', true);
+  });
   logActivity('AI Import', 'Imported invoice for ' + customerName + ' — ' + totalAmount.toLocaleString() + ' FCFA (' + payMonth + ')');
 
   document.getElementById('ai-parse-result').style.display  = 'none';
