@@ -606,7 +606,7 @@ body.mobile-view .card-title-row { flex-direction: column; align-items: flex-sta
   <div class="login-box">
     <div style="font-family:'DM Mono',monospace;font-size:0.7rem;letter-spacing:0.3em;color:var(--accent);margin-bottom:0.5rem;">✦ WASHN' FOLD</div>
     <h1>Management</h1>
-    <p class="sub">Laundry Service Software v15.0</p>
+    <p class="sub">Laundry Service Software v16.0</p>
     <div id="login-form">
       <div class="form-group" style="margin-bottom:1rem;text-align:left;">
         <label>Username</label>
@@ -2013,8 +2013,9 @@ body.mobile-view .card-title-row { flex-direction: column; align-items: flex-sta
         <input type="text" id="su-audit-search" placeholder="Search..." style="background:var(--surface2);border:1px solid var(--border);border-radius:8px;padding:0.4rem 0.8rem;color:var(--text);font-family:'DM Sans',sans-serif;font-size:0.82rem;outline:none;width:160px;" oninput="renderSuAuditLog()">
         <select id="su-audit-account" onchange="renderSuAuditLog()" style="background:var(--surface2);border:1px solid var(--border);border-radius:8px;padding:0.4rem 0.7rem;color:var(--text);font-size:0.82rem;outline:none;">
           <option value="">All Accounts</option>
-          <option value="superuser">Super User</option>
-          <option value="manager">Manager</option>
+          <option value="superuser">👑 Super User</option>
+          <option value="manager">👤 Manager</option>
+          <option value="admin">🔧 Admin/Staff</option>
         </select>
         <button class="btn btn-sm btn-secondary" onclick="exportAuditLogJSON()">⬇ Export Log</button>
       </div>
@@ -2300,9 +2301,14 @@ body.mobile-view .card-title-row { flex-direction: column; align-items: flex-sta
     <div class="form-group" style="margin-bottom:1rem;">
       <label>Account Role</label>
       <select id="ca-role" style="width:100%;">
-        <option value="editor">✏️ Editor — full access (can add, edit, delete)</option>
-        <option value="viewer">👁 Viewer — read-only (cannot modify data)</option>
+        <option value="editor">✏️ Editor — Full Access (add, edit, delete within allowed pages)</option>
+        <option value="viewer">👁 Viewer — Read-Only (view data only, cannot modify anything)</option>
       </select>
+      <div style="font-size:0.72rem;color:var(--muted);margin-top:0.5rem;padding:0.6rem;background:rgba(78,205,196,0.07);border-radius:6px;border:1px solid rgba(78,205,196,0.2);">
+        <b>Role Explanation:</b><br>
+        • <b>Editor:</b> Can view, add, edit, and delete records in allowed pages. Full operational access.<br>
+        • <b>Viewer:</b> Can only view data. Cannot create, edit, or delete anything. Safe for supervisors who need visibility only.
+      </div>
     </div>
     <div class="form-group" style="margin-bottom:1.2rem;">
       <label>Welcome Message for this Account</label>
@@ -2470,10 +2476,35 @@ window._isViewerMode = false;
 
 function _canEdit(featureName) {
   if (window._isViewerMode) {
-    showToast('👁 View-only access — ' + (featureName || 'this action') + ' is disabled for your account.', true);
+    const msg = featureName ? `👁 View-only access — ${featureName} is disabled.` : '👁 View-only access — editing is disabled for your account.';
+    showToast(msg, true);
     return false;
   }
   return true;
+}
+
+function _disableViewerButtons() {
+  if (!window._isViewerMode) return;
+  // Disable all edit/delete/create buttons for viewer mode
+  const actionButtons = document.querySelectorAll(
+    'button[onclick*="openPayModal"], button[onclick*="openDiscountModal"], ' +
+    'button[onclick*="deleteFinRecord"], button[onclick*="confirmPayment"], ' +
+    'button[onclick*="addFinanceRecord"], button[onclick*="saveInvoice"], ' +
+    'button[onclick*="deleteInvoice"], button[onclick*="openDeliveryModal"], ' +
+    'button[onclick*="openPartialDeliveryModal"], button[onclick*="saveFullDelivery"], ' +
+    'button[onclick*="savePartialDelivery"], button[onclick*="addExpense"], ' +
+    'button[onclick*="deleteExpense"], button[onclick*="addMaterial"], ' +
+    'button[onclick*="deleteMaterial"], button[onclick*="editFinanceCustomerName"], ' +
+    'button[onclick*="renameCustomer"], button[onclick*="confirmRenameCustomer"]'
+  );
+  
+  actionButtons.forEach(btn => {
+    btn.disabled = true;
+    btn.style.opacity = '0.6';
+    btn.style.cursor = 'not-allowed';
+    btn.title = '👁 View-only access — editing disabled';
+    btn.classList.add('viewer-mode-disabled');
+  });
 }
 
 // ══════════════════════════════════════════════════════════════════
@@ -2527,7 +2558,10 @@ function doLogin() {
     currentAdminAccountId  = match.id;
     errEl.style.display = 'none';
     _loadSeedData();
-    logActivity('Login', `Logged in as ${currentAccountType}`);
+    const _loginDetail = currentAccountType === 'admin' && currentAdminAccountId
+      ? `Logged in as Admin/Staff — @${u} (${(DB.adminAccounts||[]).find(a=>a.id===currentAdminAccountId)?.label || 'Admin'})`
+      : `Logged in as ${currentAccountType}`;
+    logActivity('Login', _loginDetail);
     try {
       sessionStorage.setItem('washnfold_session', JSON.stringify({
         accountType: currentAccountType,
@@ -3791,12 +3825,35 @@ function applyAccountRestrictions() {
   }
   window._isViewerMode = isAdmin && _adminRole === 'viewer';
 
+  // Add/remove viewer mode banner
+  let viewerBanner = document.getElementById('viewer-mode-banner');
+  if (window._isViewerMode) {
+    if (!viewerBanner) {
+      viewerBanner = document.createElement('div');
+      viewerBanner.id = 'viewer-mode-banner';
+      viewerBanner.style.cssText = 'position:fixed;top:0;left:0;right:0;height:40px;background:linear-gradient(135deg, rgba(78,205,196,0.2), rgba(116,185,255,0.15));border-bottom:2px solid rgba(78,205,196,0.5);display:flex;align-items:center;justify-content:center;font-weight:600;color:var(--accent2);font-size:0.9rem;z-index:9999;font-family:"DM Sans",sans-serif;';
+      viewerBanner.innerHTML = '👁 VIEW-ONLY MODE — Editing disabled for this account. You can only view data.';
+      document.body.insertBefore(viewerBanner, document.body.firstChild);
+      // Adjust main app top padding to account for banner
+      const app = document.getElementById('app');
+      if (app) app.style.marginTop = '40px';
+    }
+  } else {
+    if (viewerBanner) {
+      viewerBanner.remove();
+      const app = document.getElementById('app');
+      if (app) app.style.marginTop = '0';
+    }
+  }
+
   const badge = document.getElementById('account-badge');
   if (badge) {
     if (isSuperUser) badge.innerHTML = '<span class="admin-badge" style="background:rgba(232,197,71,0.15);border-color:rgba(232,197,71,0.5);color:var(--accent);">👑 Super User</span>';
     else if (isAdmin) {
       const acctLabel = (DB.adminAccounts||[]).find(a=>a.id===currentAdminAccountId)?.label || 'Admin';
-      const roleTag = window._isViewerMode ? ' <span style="font-size:0.6rem;opacity:0.8;">👁 View Only</span>' : '';
+      const roleTag = window._isViewerMode 
+        ? ' <span style="font-size:0.6rem;opacity:0.8;background:rgba(78,205,196,0.2);padding:0.15rem 0.35rem;border-radius:3px;border:1px solid rgba(78,205,196,0.4);">👁 VIEW ONLY</span>' 
+        : '';
       badge.innerHTML = `<span class="admin-badge">🔧 ${escHtml(acctLabel)}${roleTag}</span>`;
     } else badge.innerHTML = 'Management System';
   }
@@ -3848,7 +3905,7 @@ function applyAccountRestrictions() {
   }
   loadAdminPermGrid();
   loadSettingsUI();
-  _updateBinNavCount();
+  _disableViewerButtons();
 }
 
 function renderAll() {
@@ -3864,8 +3921,10 @@ function renderAll() {
     renderInvoicesList();
     renderDeliveries();
     renderMaterials();
+    _disableViewerButtons(); // Apply viewer mode restrictions
     requestAnimationFrame(() => {
       renderFinance();
+      _disableViewerButtons(); // Re-apply after finance renders
     });
   });
 }
@@ -4521,6 +4580,7 @@ function renderInvoicesList() {
       <td style="display:flex;gap:0.3rem;flex-wrap:wrap;"><button class="btn btn-sm btn-secondary" onclick="viewInvoice('${inv.id}')">View</button> <button class="btn btn-sm" style="background:rgba(116,185,255,0.15);border:1px solid rgba(116,185,255,0.4);color:var(--info);" onclick="editInvoice('${inv.id}')">✏️ Edit</button> <button class="btn btn-sm btn-danger" onclick="deleteInvoice('${inv.id}')" title="Delete Invoice">✕</button></td>
     </tr>`;
   }).join('');
+  _disableViewerButtons();
 }
 
 function toggleInvoiceSent(id) {
@@ -4772,6 +4832,7 @@ function renderFinance() {
       <td>${badge}</td>
       <td style="display:flex;gap:0.3rem;flex-wrap:wrap;">
         <button class="btn btn-sm btn-success" style="padding:0.3rem 0.6rem;" onclick="openPayModal('${escAttr(r.id)}')">💰</button>
+        <button class="btn btn-sm" style="padding:0.3rem 0.6rem;background:rgba(78,205,196,0.15);border:1px solid rgba(78,205,196,0.5);color:var(--accent2);" onclick="editFinanceCustomerName('${escAttr(r.id)}')" title="Edit customer name">✏️</button>
         <button class="btn btn-sm" style="padding:0.3rem 0.6rem;background:rgba(232,197,71,0.15);border:1px solid rgba(232,197,71,0.5);color:var(--accent);" onclick="openDiscountModal('${escAttr(r.id)}')">🏷</button>
         <button class="btn btn-sm btn-danger" style="padding:0.3rem 0.6rem;" onclick="deleteFinRecord('${escAttr(r.id)}')">✕</button>
       </td>
@@ -4823,6 +4884,7 @@ function renderFinance() {
       pgEl.innerHTML = pgHtml;
     }
   }
+  _disableViewerButtons();
 }
 
 function filterFinance() { _finCurrentPage = 1; _finSelectedIds.clear(); renderFinance(); }
@@ -5179,11 +5241,18 @@ function generateCustomerStatement() {
   y += 10;
 
   allRecs.forEach(function(r, idx) {
-    checkY(8);
-    if (idx%2===0){ doc.setFillColor(248,249,252); doc.rect(margin,y,cW,7,'F'); }
+    const hasDiscount = r.discount && r.discount > 0;
+    const rowH = hasDiscount ? 10 : 7;
+    checkY(rowH);
+    if (idx%2===0){ doc.setFillColor(248,249,252); doc.rect(margin,y,cW,rowH,'F'); }
+    // highlight discounted rows with a subtle gold left border
+    if (hasDiscount) {
+      doc.setFillColor(232,197,71); doc.rect(margin, y, 1.2, rowH, 'F');
+    }
     const bal = r.amount-(r.paidAmount||0);
     const statusColor = r.status==='paid'?[40,167,69]:r.status==='partial'?[255,130,0]:[220,53,69];
-    doc.setFontSize(8); doc.setFont('helvetica','normal'); doc.setTextColor(40,50,70);
+    const rowFont = hasDiscount ? 'bold' : 'normal';
+    doc.setFontSize(8); doc.setFont('helvetica', rowFont); doc.setTextColor(40,50,70);
     cx = margin+2;
     doc.text(String(idx+1), cx, y+5); cx+=colW[0];
     if (showCollDate) { doc.text(r.date||'-', cx, y+5); cx+=colW[1]; }
@@ -5192,11 +5261,26 @@ function generateCustomerStatement() {
     doc.text((r.paidAmount||0).toLocaleString(), cx, y+5); cx+=colW[showCollDate?4:3];
     doc.setTextColor(bal>0?220:40, bal>0?53:167, bal>0?69:69);
     doc.text(bal.toLocaleString(), cx, y+5); cx+=colW[showCollDate?5:4];
-    doc.setFont('helvetica','bold'); doc.setTextColor(statusColor[0],statusColor[1],statusColor[2]);
-    const statusLabel = r.status.toUpperCase() + (r.discount ? ' *' : '');
+    doc.setFont('helvetica','bold');
+    // discounted records: unpaid/partial → "OUTSTANDING", paid → "PAID ✓ (disc.)"
+    let statusLabel;
+    if (hasDiscount) {
+      statusLabel = bal > 0 ? 'OUTSTANDING' : 'PAID (disc.)';
+      const discColor = bal > 0 ? [180,80,20] : [30,130,60];
+      doc.setTextColor(discColor[0], discColor[1], discColor[2]);
+    } else {
+      statusLabel = r.status.toUpperCase();
+      doc.setTextColor(statusColor[0],statusColor[1],statusColor[2]);
+    }
     doc.text(statusLabel, cx, y+5);
+    // show discount detail on second line for discounted rows
+    if (hasDiscount) {
+      doc.setFontSize(6.5); doc.setFont('helvetica','italic'); doc.setTextColor(140,100,20);
+      const discNote = (r.discount.toLocaleString()+' FCFA off') + (r.discountNote && r.discountNote!=='Discount applied' ? ' — '+r.discountNote : '');
+      doc.text(discNote, margin+colW[0]+2, y+8.5);
+    }
     doc.setTextColor(40,50,70); doc.setFont('helvetica','normal');
-    y += 7;
+    y += rowH;
   });
 
   // Totals footer row — offset depends on whether date column is present
@@ -5213,13 +5297,16 @@ function generateCustomerStatement() {
   doc.text('TOTALS', margin+2, y+6);
   y += 11;
 
-  // Discount footnote
+  // Discount summary note
   const discountedRecs = allRecs.filter(function(r){ return r.discount && r.discount > 0; });
   if (discountedRecs.length > 0) {
-    checkY(8);
-    doc.setFontSize(7); doc.setFont('helvetica','italic'); doc.setTextColor(130,130,130);
-    doc.text('* Discount applied: ' + discountedRecs.map(function(r){ return r.discountNote || (r.discount.toLocaleString()+' FCFA off'); }).join(' | '), margin+2, y);
-    y += 8;
+    checkY(10);
+    const totalDisc = discountedRecs.reduce(function(s,r){ return s+(r.discount||0); }, 0);
+    doc.setFillColor(255,252,235); doc.roundedRect(margin, y, cW, 8, 1.5, 1.5, 'F');
+    doc.setDrawColor(200,170,50); doc.setLineWidth(0.3); doc.roundedRect(margin, y, cW, 8, 1.5, 1.5, 'S');
+    doc.setFontSize(7); doc.setFont('helvetica','bold'); doc.setTextColor(140,100,20);
+    doc.text('★  Discounts applied on ' + discountedRecs.length + ' record'+(discountedRecs.length!==1?'s':'')+' — total '+totalDisc.toLocaleString()+' FCFA off', margin+3, y+5);
+    y += 12;
   } else { y += 4; }
 
   // ── Outstanding summary ──
@@ -5331,6 +5418,29 @@ function openPayModal(recId) {
     </div>`;
   switchPayTab('pay');
   openModal('payment-modal');
+}
+
+function editFinanceCustomerName(recId) {
+  if (!_canEdit('editing customer names')) return;
+  const rec = DB.finance.find(r => r.id === recId);
+  if (!rec) { showToast('Record not found.', true); return; }
+  const newName = prompt(`Edit customer name for record ${rec.id}:`, rec.customer || '').trim();
+  if (!newName || newName === rec.customer) return;
+  const oldName = rec.customer;
+  const linkToOthers = confirm(`Update this name for:\n• All finance records\n• All invoices\n• All deliveries\n\nClick OK to update all, Cancel to update only this record.`);
+  if (linkToOthers) {
+    DB.finance.forEach(f => { if (f.customer === oldName) f.customer = newName; });
+    DB.invoices.forEach(i => { if (i.customerName === oldName) i.customerName = newName; });
+    DB.deliveries.forEach(d => { if (d.customer === oldName) d.customer = newName; });
+    logActivity('Customer Renamed', `"${oldName}" → "${newName}" [all records]`, 'finance');
+  } else {
+    rec.customer = newName;
+    logActivity('Customer Renamed', `"${oldName}" → "${newName}" [finance only]`, 'finance');
+  }
+  rec.dateModified = new Date().toISOString().split('T')[0]; rec.timeModified = new Date().toTimeString().slice(0,5);
+  renderFinance(); renderOverview(); renderInvoicesList(); renderDeliveries();
+  saveData(true);
+  showToast(`Customer name updated: ${newName} ✓`);
 }
 
 function _getPayRec() {
@@ -5900,6 +6010,8 @@ function _saveLogToDownloadsFolder() {
   });
   // Keep up to 90 entries in-app (3 months of daily logs)
   if (DB.appDownloads.length > 90) DB.appDownloads = DB.appDownloads.slice(0, 90);
+  // Log the save event (covers both auto-logout saves and manual saves)
+  logActivity('Auto-Download', `Backup saved: ${filename} (${sizeKB} KB)`, 'downloads');
   // Also trigger device download — only if this account type is allowed for local downloads
   const _localDlAccts = DB.settings.autoDownloadLocalAccounts || ['superuser','manager','admin'];
   if (_localDlAccts.includes(currentAccountType)) {
@@ -5919,7 +6031,6 @@ function manualSaveToDownloads() {
   if (!_canAccessDownloads()) { showToast('Access denied.', true); return; }
   _saveLogToDownloadsFolder();
   saveData(true);
-  logActivity('Manual Log Save', 'Manually saved log to in-app Downloads folder');
   showToast('Log saved to Downloads folder + device download started ✓');
   _updateBinNavCount();
   renderDownloadsFolder();
@@ -6299,7 +6410,7 @@ function renderDeliveries() {
       }
       const actionBtn = d.status === 'partial'
         ? `<button class="btn btn-sm btn-success" onclick="openDeliveryModal('${d.id}')">✓ Full Delivery</button>`
-        : `<button class="btn btn-sm btn-success" onclick="openDeliveryModal('${d.id}')">✓ Delivered</button>`;
+        : `<span style="display:flex;gap:0.3rem;"><button class="btn btn-sm" style="background:rgba(78,205,196,0.15);border:1px solid rgba(78,205,196,0.5);color:var(--accent2);" onclick="openPartialDeliveryModal('${d.id}')">⬤ Partial</button><button class="btn btn-sm btn-success" onclick="openDeliveryModal('${d.id}')">✓ Full</button></span>`;
       return `<tr class="${rowClass}"><td><b>${escHtml(d.customer)}</b></td><td>${svcLabel(d.serviceTypes)}</td><td style="font-family:'DM Mono',monospace;font-size:0.78rem;">${formatDate(d.collectionDate)}</td><td style="font-family:'DM Mono',monospace;font-size:0.78rem;">${formatDate(d.expectedDate)}</td><td style="font-family:'DM Mono',monospace;font-weight:700;color:${daysSince>=DB.settings.delMax?'var(--danger)':daysSince>=DB.settings.delMin?'var(--success)':'var(--muted)'};">${daysSince}d</td><td>${statusBadge}</td><td>${actionBtn}</td></tr>`;
     }).join('');
   }
@@ -6316,6 +6427,7 @@ function renderDeliveries() {
     }).join('');
   }
   } // end if (tbody2)
+  _disableViewerButtons();
 }
 
 function svcSymbol(svcType) {
@@ -6409,6 +6521,22 @@ function openDeliveryModal(id) {
     `${svc} · Collected: ${formatDate(d.collectionDate)}` +
     (isPartial && d.partialNote ? ` · <span style="color:var(--accent2);">⬤ Partial: ${escHtml(d.partialNote)}</span>` : '') +
     `</div>`;
+  openModal('partial-delivery-modal');
+}
+
+function openPartialDeliveryModal(id) {
+  if (!_canEdit('recording deliveries')) return;
+  const d = DB.deliveries.find(x => x.id === id);
+  if (!d) return;
+  document.getElementById('partial-del-id').value = id;
+  document.getElementById('partial-delivery-form').style.display = 'block';
+  document.getElementById('partial-qty').value = d.partialQty || '';
+  document.getElementById('partial-note').value = d.partialNote || '';
+  const svc = svcLabel(d.serviceTypes);
+  document.getElementById('partial-del-summary').innerHTML =
+    `<div style="font-weight:600;font-size:0.95rem;margin-bottom:0.3rem;">${escHtml(d.customer)}</div>` +
+    `<div style="font-family:'DM Mono',monospace;font-size:0.78rem;color:var(--muted);">` +
+    `${svc} · Collected: ${formatDate(d.collectionDate)}</div>`;
   openModal('partial-delivery-modal');
 }
 
@@ -8210,13 +8338,22 @@ function renderSuAuditLog() {
     </div>`;
     entries.forEach(entry => {
       const ts = new Date(entry.timestamp).toLocaleString('en-GB',{day:'2-digit',month:'short',hour:'2-digit',minute:'2-digit'});
-      const typeBadge = entry.accountType === 'superuser'
-        ? `<span class="badge badge-yellow" style="font-size:0.58rem;">👑 Super</span>`
-        : entry.accountType === 'manager'
-        ? `<span class="badge badge-blue" style="font-size:0.58rem;">👑 Manager</span>`
-        : `<span class="badge badge-green" style="font-size:0.58rem;">🔧 ${escHtml(entry.accountType||'user')}</span>`;
+      let typeBadge;
+      if (entry.accountType === 'superuser') {
+        typeBadge = `<span class="badge badge-yellow" style="font-size:0.58rem;">👑 Super</span>`;
+      } else if (entry.accountType === 'manager') {
+        typeBadge = `<span class="badge badge-blue" style="font-size:0.58rem;">👤 Manager</span>`;
+      } else if (entry.accountType === 'admin') {
+        // Try to look up the admin's label from DB
+        const _adminAcct = (DB.adminAccounts||[]).find(function(a){ return a.username === entry.username; });
+        const _adminLabel = _adminAcct ? _adminAcct.label : 'Admin/Staff';
+        typeBadge = `<span class="badge" style="font-size:0.58rem;background:rgba(81,207,102,0.12);border:1px solid rgba(81,207,102,0.4);color:var(--success);">🔧 ${escHtml(_adminLabel)}</span>`;
+      } else {
+        typeBadge = `<span class="badge" style="font-size:0.58rem;background:var(--surface2);border:1px solid var(--border);color:var(--muted);">${escHtml(entry.accountType||'unknown')}</span>`;
+      }
+      const pageTag = entry.page ? `<span style="font-size:0.62rem;color:var(--muted);font-family:'DM Mono',monospace;background:var(--surface2);border:1px solid var(--border);border-radius:4px;padding:0.05rem 0.35rem;margin-left:0.3rem;">${escHtml(entry.page)}</span>` : '';
       html += `<div class="activity-item">
-        <div><b>${escHtml(entry.action||'')}</b> — ${escHtml(entry.detail||'')} ${typeBadge} <span style="font-size:0.68rem;color:var(--accent);font-family:'DM Mono',monospace;">${escHtml(entry.username||'?')}</span></div>
+        <div><b>${escHtml(entry.action||'')}</b> — ${escHtml(entry.detail||'')} ${typeBadge} <span style="font-size:0.68rem;color:var(--accent);font-family:'DM Mono',monospace;">@${escHtml(entry.username||'?')}</span>${pageTag}</div>
         <div class="act-time">${ts}</div>
       </div>`;
     });
