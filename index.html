@@ -2494,7 +2494,7 @@ function _disableViewerButtons() {
     'button[onclick*="deleteFinRecord"], button[onclick*="confirmPayment"], ' +
     'button[onclick*="addFinanceRecord"], button[onclick*="saveInvoice"], ' +
     'button[onclick*="deleteInvoice"], button[onclick*="openDeliveryModal"], ' +
-    'button[onclick*="openPartialDeliveryModal"], button[onclick*="saveFullDelivery"], ' +
+    'button[onclick*="markFullDeliveryDirect"], button[onclick*="openPartialDeliveryModal"], button[onclick*="saveFullDelivery"], ' +
     'button[onclick*="savePartialDelivery"], button[onclick*="addExpense"], ' +
     'button[onclick*="deleteExpense"], button[onclick*="addMaterial"], ' +
     'button[onclick*="deleteMaterial"], button[onclick*="editFinanceCustomerName"], ' +
@@ -6445,8 +6445,8 @@ function renderDeliveries() {
         statusBadge = `<span class="badge badge-yellow">⏳ In Progress</span>`;
       }
       const actionBtn = d.status === 'partial'
-        ? `<button class="btn btn-sm btn-success" onclick="openDeliveryModal('${d.id}')">✓ Full Delivery</button>`
-        : `<span style="display:flex;gap:0.3rem;"><button class="btn btn-sm" style="background:rgba(78,205,196,0.15);border:1px solid rgba(78,205,196,0.5);color:var(--accent2);" onclick="openPartialDeliveryModal('${d.id}')">⬤ Partial</button><button class="btn btn-sm btn-success" onclick="openDeliveryModal('${d.id}')">✓ Full</button></span>`;
+        ? `<button class="btn btn-sm btn-success" onclick="markFullDeliveryDirect('${d.id}')">✓ Full Delivery</button>`
+        : `<span style="display:flex;gap:0.3rem;"><button class="btn btn-sm" style="background:rgba(78,205,196,0.15);border:1px solid rgba(78,205,196,0.5);color:var(--accent2);" onclick="openPartialDeliveryModal('${d.id}')">⬤ Partial</button><button class="btn btn-sm btn-success" onclick="markFullDeliveryDirect('${d.id}')">✓ Full</button></span>`;
       return `<tr class="${rowClass}"><td><b>${escHtml(d.customer)}</b></td><td>${svcLabel(d.serviceTypes)}</td><td style="font-family:'DM Mono',monospace;font-size:0.78rem;">${formatDate(d.collectionDate)}</td><td style="font-family:'DM Mono',monospace;font-size:0.78rem;">${formatDate(d.expectedDate)}</td><td style="font-family:'DM Mono',monospace;font-weight:700;color:${daysSince>=DB.settings.delMax?'var(--danger)':daysSince>=DB.settings.delMin?'var(--success)':'var(--muted)'};">${daysSince}d</td><td>${statusBadge}</td><td>${actionBtn}</td></tr>`;
     }).join('');
   }
@@ -6541,7 +6541,22 @@ function renderDueLookup() {
 
 let _openDeliveryId = null;
 
-function markDelivered(id) { openDeliveryModal(id); }
+function markDelivered(id) { markFullDeliveryDirect(id); }
+
+function markFullDeliveryDirect(id) {
+  if (!_canEdit('recording deliveries')) return;
+  const d = DB.deliveries.find(x => x.id === id);
+  if (!d) { showToast('Delivery record not found — please try again.', true); return; }
+  _openDeliveryId = id;
+  d.status = 'delivered';
+  d.deliveredDate = new Date().toISOString().split('T')[0];
+  delete d.partialNote; delete d.partialQty;
+  renderDeliveries();
+  addNotification(`${d.customer}'s laundry marked as delivered ✓`, 'success');
+  showToast(`${d.customer}'s laundry delivered ✓`);
+  logActivity('Delivery', `Marked ${d.customer}'s laundry as fully delivered`);
+  saveData(true).then(saved => { if (!saved) showToast('Delivery marked ✓ — cloud sync pending', true); });
+}
 
 function openDeliveryModal(id) {
   if (!_canEdit('recording deliveries')) return;
