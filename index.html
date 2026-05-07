@@ -3063,7 +3063,7 @@ function _performLogout(isAuto) {
     });
   }
   if (Array.isArray(saveObj.activityLog) && saveObj.activityLog.length > 300) {
-    saveObj.activityLog = saveObj.activityLog.slice(-300);
+    saveObj.activityLog = saveObj.activityLog.slice(0, 300);
   }
   if (Array.isArray(saveObj.appDownloads)) {
     saveObj.appDownloads = saveObj.appDownloads.map(function(dl) {
@@ -3505,6 +3505,7 @@ function doLogout() {
   if (_dataUnsubscribe) { try { _dataUnsubscribe(); } catch(e){} _dataUnsubscribe = null; }
   if (_presenceRefreshTimer) { clearInterval(_presenceRefreshTimer); _presenceRefreshTimer = null; }
   if (_reminderIntervalId) { clearInterval(_reminderIntervalId); _reminderIntervalId = null; }
+  clearTimeout(_saveRetryTimer); _saveRetryTimer = null; _saveRetryCount = 0;
 
   // Clear persisted session on logout
   try { sessionStorage.removeItem('washnfold_session'); } catch(e) {}
@@ -4349,13 +4350,14 @@ function generateInvoice() {
       // date = collection date (date of laundry reception), dateModified = now
       fin.date          = currentInvoiceCollectionDate || fin.date;
       fin.dateModified  = now;
+      fin.timeModified  = new Date().toTimeString().slice(0,5);
       fin.amount        = grand;
       // Re-evaluate paidAmount: can't have paid more than new total
       fin.paidAmount    = Math.min(preservedPaidAmt, grand);
       fin.status        = fin.paidAmount >= grand ? 'paid' : fin.paidAmount > 0 ? 'partial' : 'unpaid';
     } else {
       // Finance record missing — recreate it
-      DB.finance.push({ id: 'fin_' + Date.now(), invoiceId: editingInvoiceId, customer: currentInvoiceCustomer, month, amount: grand, paidAmount: preservedPaidAmt, status: preservedPayStatus, paymentMethod: '-', date: finDate, dateModified: now });
+      DB.finance.push({ id: 'fin_' + Date.now(), invoiceId: editingInvoiceId, customer: currentInvoiceCustomer, month, amount: grand, paidAmount: preservedPaidAmt, status: preservedPayStatus, paymentMethod: '-', date: finDate, dateModified: now, timeModified: new Date().toTimeString().slice(0,5) });
     }
     // Sync invoice payment status with finance
     existingInv.paymentStatus = fin ? fin.status : preservedPayStatus;
@@ -4379,7 +4381,7 @@ function generateInvoice() {
     document.getElementById('inv-step-2').style.display = 'block';
     addNotification(`Invoice updated for ${currentInvoiceCustomer} — ${grand.toLocaleString()} FCFA`, 'info');
     showToast('Invoice updated ✓');
-    logActivity('Invoice Updated', `Updated invoice for ${currentInvoiceCustomer} — ${grand.toLocaleString()} FCFA`, 'invoices');
+    logActivity('Invoice Updated', `${currentInvoiceCustomer} — ${svcLabel === 'mixed' ? 'Wash+Iron' : svcLabel === 'wash_iron' ? 'Wash+Iron' : 'Wash Only'} — ${grand.toLocaleString()} FCFA (${_totalDresses} item${_totalDresses !== 1 ? 's' : ''}) | Collected: ${currentInvoiceCollectionDate} → Delivery: ${delDate}`, 'invoices');
 
   } else {
     // ── NEW INVOICE MODE ───────────────────────────────────────────
@@ -4397,7 +4399,7 @@ function generateInvoice() {
     };
     DB.invoices.unshift(inv);
     // Finance date = collection date (date of laundry reception)
-    DB.finance.push({ id: 'fin_' + Date.now(), invoiceId: id, customer: customerName, month, amount: grand, paidAmount: 0, status: 'unpaid', paymentMethod: '-', date: finDate, dateModified: now });
+    DB.finance.push({ id: 'fin_' + Date.now(), invoiceId: id, customer: customerName, month, amount: grand, paidAmount: 0, status: 'unpaid', paymentMethod: '-', date: finDate, dateModified: now, timeModified: new Date().toTimeString().slice(0,5) });
     DB.deliveries.push({ id: 'del_' + Date.now(), invoiceId: id, customer: customerName, serviceTypes: svcLabel, collectionDate: currentInvoiceCollectionDate, expectedDate: delDate, status: 'pending', deliveredDate: null });
     DB.customerHistory[customerName] = { lastService: svcLabel === 'mixed' ? (washIronItems.length > washOnlyItems.length ? 'wash_iron' : 'wash_only') : svcLabel, lastDate: now };
     _lastSavedInvoiceId = id;
@@ -4405,7 +4407,7 @@ function generateInvoice() {
     document.getElementById('inv-step-1').style.display = 'none';
     document.getElementById('inv-step-2').style.display = 'block';
     addNotification(`Invoice created for ${customerName} — ${grand.toLocaleString()} FCFA`, 'success');
-    logActivity('Invoice Created', `Invoice for ${customerName}, Total: ${grand.toLocaleString()} FCFA`, 'invoices'); showToast('Invoice saved ✓');
+    logActivity('Invoice Created', `${customerName} — ${svcLabel === 'mixed' ? 'Wash+Iron' : svcLabel === 'wash_iron' ? 'Wash+Iron' : 'Wash Only'} — ${grand.toLocaleString()} FCFA (${_totalDresses} item${_totalDresses !== 1 ? 's' : ''}) | Collected: ${currentInvoiceCollectionDate} → Delivery: ${delDate}`, 'invoices'); showToast('Invoice saved ✓');
   }
 
   renderAll();
@@ -4763,7 +4765,7 @@ function deleteInvoice(id) {
   _sendToRecycleBin('invoice', inv, linkedItems);
   renderAll(); // includes renderDepartments — departments now reflect deletion
   saveData(true);
-  logActivity('Invoice → Bin', `Invoice for ${inv.customerName} — ${inv.total.toLocaleString()} FCFA (+ ${linkedItems.length} linked)`);
+  logActivity('Invoice → Bin', `${inv.customerName} — ${inv.serviceTypes === 'mixed' ? 'Wash+Iron' : inv.serviceTypes === 'wash_iron' ? 'Wash+Iron' : 'Wash Only'} — ${inv.total.toLocaleString()} FCFA (+ ${linkedItems.length} linked record${linkedItems.length !== 1 ? 's' : ''})`);
   showToast(`Moved to Recycle Bin 🗑️ (+${linkedItems.length} linked records) — restore within 30 days`);
   if (currentAccountType === 'admin') logAdminActivity('Delete Invoice', `→ Bin: ${inv.customerName} — ${inv.total.toLocaleString()} FCFA`);
 }
@@ -4836,7 +4838,8 @@ function renderFinance() {
       else if (r.paymentMethod === 'Cash')    methodTag = `<span style="display:inline-block;background:rgba(232,197,71,0.15);border:1px solid rgba(232,197,71,0.4);border-radius:4px;padding:0.1rem 0.4rem;font-family:'DM Mono',monospace;font-size:0.72rem;color:var(--accent);margin-left:0.3rem;">C</span>`;
     }
     const dateDisplay = r.date || '—';
-    const modDisplay  = r.dateModified || r.date || '—';
+    const _modDate = r.dateModified || r.date || '—';
+    const modDisplay  = (_modDate !== '—' && r.timeModified) ? _modDate + ' ' + r.timeModified : _modDate;
     const isChecked = _finSelectedIds.has(r.id);
     const rowStyle = isChecked ? 'background:rgba(255,107,107,0.08);' : '';
     return `<tr style="${rowStyle}">
@@ -5103,7 +5106,7 @@ function addManualFinRecord() {
   if (!amount)   { showToast('Amount billed is required.', true); return; }
   const status = paid >= amount ? 'paid' : paid > 0 ? 'partial' : 'unpaid';
   const now = new Date().toISOString().split('T')[0];
-  const rec = { id: 'fin_man_' + Date.now(), customer, month, amount, paidAmount: paid, status, paymentMethod: method, date, dateModified: now };
+  const rec = { id: 'fin_man_' + Date.now(), customer, month, amount, paidAmount: paid, status, paymentMethod: method, date, dateModified: now, timeModified: new Date().toTimeString().slice(0,5) };
   DB.finance.unshift(rec);
   if (!DB.customerHistory[customer]) DB.customerHistory[customer] = { lastService: 'wash_only', lastDate: date };
   // Reset form
@@ -5117,7 +5120,7 @@ function addManualFinRecord() {
     if (!saved) showToast('Financial record save failed — please retry.', true);
   });
   showToast('Financial record added for ' + customer + ' \u2713');
-  logActivity('Manual Finance', `${customer} — ${amount.toLocaleString()} FCFA`, 'finance');
+  logActivity('Finance Record Added', `${customer} — ${amount.toLocaleString()} FCFA | Status: ${status} | Method: ${method} | Period: ${month}`, 'finance');
 }
 
 // ── Customer statement autocomplete ──────────────────────────────
@@ -5409,6 +5412,7 @@ function generateCustomerStatement() {
   const _mm  = String(_now.getMinutes()).padStart(2,'0');
   const _stmtFilename = safeName + ' - Statement ' + _dd + '-' + _mon + '-' + _yr + ' ' + _hh + '-' + _mm + '.pdf';
   doc.save(_stmtFilename);
+  logActivity('Customer Statement', `Downloaded statement for ${custName} \u2014 ${allRecs.length} record${allRecs.length !== 1 ? 's' : ''} | Period: ${monthFilter || 'all time'}${statusFilter ? ' | Filter: ' + statusFilter : ''} | Balance: ${totalBalance.toLocaleString()} FCFA`, 'finance');
   showToast('Statement PDF downloaded \u2713');
 }
 
@@ -5679,6 +5683,7 @@ function applyDiscount() {
   if (!rec) { showToast('Record not found.', true); return; }
   const balance = rec.amount - (rec.paidAmount || 0);
   if (discAmt > balance) { showToast(`Discount (${discAmt.toLocaleString()} FCFA) exceeds outstanding balance (${balance.toLocaleString()} FCFA).`, true); return; }
+  const _origAmt = rec.amount;
   rec.amount = Math.max(rec.paidAmount || 0, rec.amount - discAmt);
   rec.discount = (rec.discount || 0) + discAmt;
   rec.discountNote = reason || 'Discount applied';
@@ -5696,7 +5701,7 @@ function applyDiscount() {
   renderFinance(); renderOverview(); renderInvoicesList();
   saveData(true);
   showToast(`Discount of ${discAmt.toLocaleString()} FCFA applied to ${rec.customer} ✓`);
-  logActivity('Discount Applied', `${rec.customer} — ${discAmt.toLocaleString()} FCFA discount${reason ? ' (' + reason + ')' : ''}`, 'finance');
+  logActivity('Discount Applied', `${rec.customer} — ${discAmt.toLocaleString()} FCFA discount | Original: ${_origAmt.toLocaleString()} → New total: ${rec.amount.toLocaleString()} FCFA${reason ? ' | Reason: ' + reason : ''}`, 'finance');
 }
 
 // ══════════════════════════════════════════════════════════════════
@@ -5853,19 +5858,24 @@ function restoreFromBin(binId) {
 
 function permanentDeleteBinItem(binId) {
   if (!confirm('Permanently delete this item? This CANNOT be undone.')) return;
+  const binItem = DB.recycleBin.find(b => b.id === binId);
+  const itemType = binItem ? binItem.type : 'unknown';
+  const itemName = binItem ? (binItem.data.customer || binItem.data.customerName || binItem.data.item || binItem.data.title || binItem.data.name || binItem.data.id || binId) : binId;
+  const itemAmt = binItem && binItem.data.amount ? ` — ${binItem.data.amount.toLocaleString()} FCFA` : binItem && binItem.data.total ? ` — ${binItem.data.total.toLocaleString()} FCFA` : '';
   DB.recycleBin = DB.recycleBin.filter(b => b.id !== binId);
   saveData(true);
-  logActivity('Permanent Delete', `Permanently deleted item from recycle bin`);
+  logActivity('Permanent Delete', `Permanently deleted ${itemType} record for ${itemName}${itemAmt}`);
   showToast('Permanently deleted ✓');
   renderRecycleBin();
 }
 
 function emptyRecycleBin() {
   if (!DB.recycleBin || DB.recycleBin.length === 0) { showToast('Recycle bin is already empty.', true); return; }
-  if (!confirm(`Permanently delete ALL ${DB.recycleBin.length} item(s) in the recycle bin? This CANNOT be undone.`)) return;
+  const count = DB.recycleBin.length;
+  if (!confirm(`Permanently delete ALL ${count} item(s) in the recycle bin? This CANNOT be undone.`)) return;
   DB.recycleBin = [];
   saveData(true);
-  logActivity('Empty Recycle Bin', 'All items permanently deleted from recycle bin');
+  logActivity('Empty Recycle Bin', `Permanently deleted all ${count} item${count !== 1 ? 's' : ''} from recycle bin`);
   showToast('Recycle bin emptied ✓');
   renderRecycleBin();
 }
@@ -6250,7 +6260,8 @@ function toggleDownloadDelegate(acctId, grant) {
     DB.settings.downloadsAccessList = DB.settings.downloadsAccessList.filter(id => id !== acctId);
   }
   saveData();
-  logActivity('Delegate Downloads', `${grant ? 'Granted' : 'Revoked'} downloads access for account ${acctId}`);
+  const _dlAcct = (DB.adminAccounts || []).find(a => a.id === acctId);
+  logActivity('Delegate Downloads', `${grant ? 'Granted' : 'Revoked'} downloads access for ${_dlAcct ? _dlAcct.label + ' (@' + _dlAcct.username + ')' : acctId}`);
   renderDelegateList();
   showToast(`Downloads access ${grant ? 'granted' : 'revoked'} ✓`);
 }
@@ -6554,7 +6565,7 @@ function markFullDeliveryDirect(id) {
   renderDeliveries();
   addNotification(`${d.customer}'s laundry marked as delivered ✓`, 'success');
   showToast(`${d.customer}'s laundry delivered ✓`);
-  logActivity('Delivery', `Marked ${d.customer}'s laundry as fully delivered`);
+  logActivity('Full Delivery', `${d.customer} — ${d.serviceTypes === 'wash_only' ? 'Wash Only' : d.serviceTypes === 'wash_iron' ? 'Wash & Iron' : 'Mixed'} fully delivered on ${d.deliveredDate}`);
   saveData(true).then(saved => { if (!saved) showToast('Delivery marked ✓ — cloud sync pending', true); });
 }
 
@@ -6607,7 +6618,7 @@ function saveFullDelivery() {
   renderDeliveries();
   addNotification(`${d.customer}'s laundry marked as delivered ✓`, 'success');
   showToast(`${d.customer}'s laundry delivered ✓`);
-  logActivity('Delivery', `Marked ${d.customer}'s laundry as fully delivered`);
+  logActivity('Full Delivery', `${d.customer} — ${d.serviceTypes === 'wash_only' ? 'Wash Only' : d.serviceTypes === 'wash_iron' ? 'Wash & Iron' : 'Mixed'} fully delivered on ${d.deliveredDate}`);
   saveData(true).then(saved => { if (!saved) showToast('Delivery marked ✓ — cloud sync pending', true); });
 }
 
@@ -6629,10 +6640,10 @@ function savePartialDelivery() {
   d.partialDate = new Date().toISOString().split('T')[0];
   closeModal('partial-delivery-modal');
   renderDeliveries();
-  const detail = qty ? `${qty}` : note;
+  const detail = [qty ? `${qty} items` : '', note].filter(Boolean).join(' — ');
   addNotification(`${d.customer} — partial delivery recorded (${detail})`, 'info');
   showToast(`${d.customer} partial delivery saved ✓`);
-  logActivity('Partial Delivery', `${d.customer} — ${detail}`);
+  logActivity('Partial Delivery', `${d.customer} — ${d.serviceTypes === 'wash_only' ? 'Wash Only' : d.serviceTypes === 'wash_iron' ? 'Wash & Iron' : 'Mixed'} | ${detail} | Date: ${d.partialDate}`);
   saveData(true).then(saved => { if (!saved) showToast('Delivery marked ✓ — cloud sync pending', true); });
 }
 
@@ -7867,7 +7878,7 @@ function saveSettings() {
   DB.settings.postDays = parseFloat(document.getElementById('set-post-days').value) || 1.5;
   const bagDefaultEl = document.getElementById('set-default-bag');
   if (bagDefaultEl) DB.settings.defaultBagIncluded = bagDefaultEl.value === '1';
-  logActivity('Settings', 'Updated delivery/bag settings');
+  logActivity('Settings', `Delivery window: ${DB.settings.delMin}–${DB.settings.delMax} days | Pre-notify: ${DB.settings.preDays}d | Post-flag: ${DB.settings.postDays}d | Bag default: ${DB.settings.defaultBagIncluded ? 'included' : 'excluded'}`, 'settings');
   saveData(true);
   showToast('Settings saved ✓');
 }
@@ -8218,7 +8229,8 @@ function toggleBinDelegate(acctId, grant) {
     if (binNav) binNav.style.display = _canAccessBin() ? '' : 'none';
   }
   saveData();
-  logActivity('Delegate Bin', `${grant ? 'Granted' : 'Revoked'} Recycle Bin access for account ${acctId}`);
+  const _binAcct = (DB.adminAccounts || []).find(a => a.id === acctId);
+  logActivity('Delegate Bin', `${grant ? 'Granted' : 'Revoked'} Recycle Bin access for ${_binAcct ? _binAcct.label + ' (@' + _binAcct.username + ')' : acctId}`);
   renderBinDelegateList();
   showToast(`Bin access ${grant ? 'granted' : 'revoked'} ✓`);
 }
@@ -8465,7 +8477,7 @@ function savePrices() {
       DB.prices[key][input.dataset.field] = parseInt(input.value) || 0;
     });
   });
-  logActivity('Prices Updated', 'Price list updated'); showToast('Prices saved ✓');
+  logActivity('Prices Updated', `Updated ${rows.length} service price categor${rows.length !== 1 ? 'ies' : 'y'}`, 'settings'); showToast('Prices saved ✓');
   saveData();
 }
 
@@ -8596,6 +8608,7 @@ function logDeptSnapshot(dept) {
   });
   renderDeptHistory();
   saveData();
+  logActivity('Dept Snapshot', `Logged ${items.length} item${items.length !== 1 ? 's' : ''} to ${dept === 'pre' ? 'Pre-Laundry' : 'Post-Laundry'} department history`, 'departments');
   showToast(`${items.length} items logged to department history ✓`);
 }
 
@@ -8615,7 +8628,10 @@ function renderDeptHistory() {
 
 function clearDeptHistory() {
   if (!confirm('Clear all department history? This cannot be undone.')) return;
+  const count = DB.deptHistory.length;
   DB.deptHistory = [];
+  saveData(true);
+  logActivity('Clear Dept History', `Cleared all ${count} department history record${count !== 1 ? 's' : ''}`, 'departments');
   renderDeptHistory();
   showToast('Department history cleared.');
 }
@@ -8974,6 +8990,8 @@ function migrateRecord(r) {
 // ══════════════════════════════════════════════════════════════════
 let _autoSaveTimer = null;
 let _autoSaveTimer2 = null;
+let _saveRetryTimer = null;
+let _saveRetryCount = 0;
 function saveData(immediate) {
   // Guard: never save before real data is loaded
   if (!window._appDataReady) return Promise.resolve(false);
@@ -8983,6 +9001,7 @@ function saveData(immediate) {
   window._loginDataSavedAt = new Date().toISOString();
   clearTimeout(_autoSaveTimer);
   clearTimeout(_autoSaveTimer2);
+  clearTimeout(_saveRetryTimer);
 
   if (immediate === false) {
     return Promise.resolve(false);
@@ -9036,7 +9055,7 @@ async function _doCloudSave() {
       });
     }
     if (Array.isArray(saveObj.activityLog) && saveObj.activityLog.length > 300) {
-      saveObj.activityLog = saveObj.activityLog.slice(-300);
+      saveObj.activityLog = saveObj.activityLog.slice(0, 300);
     }
     if (Array.isArray(saveObj.appDownloads)) {
       saveObj.appDownloads = saveObj.appDownloads.map(function(dl) {
@@ -9085,6 +9104,8 @@ async function _doCloudSave() {
     }
 
     if (ok) {
+      _saveRetryCount = 0;
+      clearTimeout(_saveRetryTimer);
       if (ind) {
         ind.textContent = '✓ Saved'; ind.style.color = 'var(--success)';
         ind.style.display = 'inline'; ind.style.opacity = '1';
@@ -9104,6 +9125,15 @@ async function _doCloudSave() {
       ind.style.display = 'inline'; ind.style.opacity = '1';
       clearTimeout(ind._hideTimer);
     }
+    // Auto-retry on failure: 20s → 40s → 60s → 90s → 120s (5 attempts)
+    if (_saveRetryCount < 5 && window._appDataReady) {
+      _saveRetryCount++;
+      const _retryDelay = Math.min(20000 * _saveRetryCount, 120000);
+      clearTimeout(_saveRetryTimer);
+      _saveRetryTimer = setTimeout(() => {
+        if (window._appDataReady && currentAccountUsername) _doCloudSave();
+      }, _retryDelay);
+    }
     return false;
   } catch (e) {
     const ind = document.getElementById('autosave-indicator');
@@ -9113,6 +9143,14 @@ async function _doCloudSave() {
       ind.style.color = 'var(--danger)';
       ind.style.display = 'inline'; ind.style.opacity = '1';
       clearTimeout(ind._hideTimer);
+    }
+    if (_saveRetryCount < 5 && window._appDataReady) {
+      _saveRetryCount++;
+      const _retryDelay = Math.min(20000 * _saveRetryCount, 120000);
+      clearTimeout(_saveRetryTimer);
+      _saveRetryTimer = setTimeout(() => {
+        if (window._appDataReady && currentAccountUsername) _doCloudSave();
+      }, _retryDelay);
     }
     return false;
   }
@@ -11544,7 +11582,8 @@ function aiConfirmImport() {
     id: finId, customer: customerName, month: payMonth,
     amount: totalAmount, paidAmount: 0, status: 'unpaid',
     paymentMethod: '-', date: collDate,
-    dateModified: new Date().toISOString().split('T')[0], invoiceId: invId
+    dateModified: new Date().toISOString().split('T')[0],
+    timeModified: new Date().toTimeString().slice(0,5), invoiceId: invId
   });
   DB.deliveries.unshift({
     id: delId, invoiceId: invId, customer: customerName,
