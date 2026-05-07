@@ -912,6 +912,7 @@ body.mobile-view .card-title-row { flex-direction: column; align-items: flex-sta
             <button class="btn btn-sm btn-secondary" onclick="doneInvoice()">← New Invoice</button>
             <button class="btn btn-sm btn-primary" onclick="copyInvoice()">⎘ Copy</button>
             <button class="btn btn-sm btn-secondary" onclick="downloadPDF()" style="background:var(--surface2);border:1px solid var(--border);">⬇ PDF</button>
+            <button class="btn btn-sm" style="background:rgba(232,197,71,0.15);border:1px solid rgba(232,197,71,0.5);color:var(--accent);" onclick="openDiscountModalForCurrentInvoice()">🏷 Discount</button>
             <button class="btn btn-sm btn-success" onclick="sendToWhatsApp()">📲 Send via WhatsApp</button>
           </div>
         </div>
@@ -2471,6 +2472,7 @@ let currentAccountType = 'manager'; // 'manager', 'admin', 'superuser'
 let currentAccountUsername = '';
 let currentAdminAccountId = null; // id in DB.adminAccounts if admin login
 let editingInvoiceId = null;
+let _lastSavedInvoiceId = null;
 let _inactivityTimer = null;
 window._isViewerMode = false;
 
@@ -2495,7 +2497,8 @@ function _disableViewerButtons() {
     'button[onclick*="savePartialDelivery"], button[onclick*="addExpense"], ' +
     'button[onclick*="deleteExpense"], button[onclick*="addMaterial"], ' +
     'button[onclick*="deleteMaterial"], button[onclick*="editFinanceCustomerName"], ' +
-    'button[onclick*="renameCustomer"], button[onclick*="confirmRenameCustomer"]'
+    'button[onclick*="renameCustomer"], button[onclick*="confirmRenameCustomer"], ' +
+    'button[onclick*="openDiscountModalForInvoice"], button[onclick*="openDiscountModalForCurrentInvoice"]'
   );
   
   actionButtons.forEach(btn => {
@@ -3161,27 +3164,41 @@ function _waitForSaveThenLogout() {
 
 // ── Public logout entry point ─────────────────────────────────────────────────
 function confirmLogout(isAuto) {
-  // Auto-logout (inactivity timer): skip all UI, go straight to save + logout
   if (isAuto) {
     _performLogout(true);
     return;
   }
-  // Manual logout: require confirmation first
-  if (!confirm('Are you sure you want to log out?')) return;
-  // Only show the offline modal when the device truly has no internet at all.
-  // _firebaseBlocked can be set incorrectly on slow networks, so we rely solely
-  // on navigator.onLine to detect a genuine offline state.
   if (!navigator.onLine) {
     _offlineLogoutModal();
     return;
   }
-  // If a cloud save is still in flight, warn the user before proceeding
-  if (window._fbSavePending) {
-    _pendingSaveLogoutModal();
-    return;
-  }
-  // Online with Firebase available and all saves confirmed: proceed immediately
-  _performLogout(false);
+  _showLogoutOptionsModal();
+}
+
+function _showLogoutOptionsModal() {
+  const existing = document.getElementById('logout-options-modal');
+  if (existing) existing.remove();
+  const overlay = document.createElement('div');
+  overlay.id = 'logout-options-modal';
+  overlay.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.7);z-index:99999;display:flex;align-items:center;justify-content:center;padding:1rem;';
+  overlay.innerHTML = `
+    <div style="background:var(--surface);border:1px solid rgba(255,255,255,0.12);border-radius:14px;padding:1.8rem;max-width:420px;width:100%;font-family:'DM Sans',sans-serif;">
+      <div style="font-size:1.1rem;font-weight:700;margin-bottom:0.5rem;color:var(--text);">🔒 Logout</div>
+      <p style="font-size:0.83rem;color:var(--muted);margin-bottom:1.2rem;">How would you like to logout?</p>
+      <div style="display:flex;flex-direction:column;gap:0.6rem;">
+        <button onclick="document.getElementById('logout-options-modal').remove();window._fbSavePending?_pendingSaveLogoutModal():_performLogout(false);" style="background:rgba(81,207,102,0.15);border:1px solid rgba(81,207,102,0.4);color:var(--success);border-radius:8px;padding:0.75rem 1rem;font-family:'DM Mono',monospace;font-size:0.8rem;cursor:pointer;font-weight:600;text-align:left;">💾 Save &amp; Logout<br><span style="font-weight:400;font-size:0.72rem;color:var(--muted);">Saves all data to cloud, then logs out. Recommended.</span></button>
+        <button onclick="document.getElementById('logout-options-modal').remove();_performLogoutSkipSave();" style="background:rgba(255,107,107,0.08);border:1px solid rgba(255,107,107,0.3);color:var(--danger);border-radius:8px;padding:0.75rem 1rem;font-family:'DM Mono',monospace;font-size:0.8rem;cursor:pointer;text-align:left;">⚡ Logout Without Saving<br><span style="font-size:0.72rem;color:var(--muted);">Logout immediately — skips cloud sync. Use if on a slow connection or to discard unsaved changes.</span></button>
+        <button onclick="document.getElementById('logout-options-modal').remove();" style="background:rgba(255,255,255,0.05);border:1px solid rgba(255,255,255,0.1);color:var(--muted);border-radius:8px;padding:0.6rem 1rem;font-family:'DM Mono',monospace;font-size:0.8rem;cursor:pointer;">Cancel (Stay Logged In)</button>
+      </div>
+    </div>`;
+  document.body.appendChild(overlay);
+}
+
+function _performLogoutSkipSave() {
+  logActivity('Logout', 'Manual logout (without cloud sync)');
+  window._appDataReady = false;
+  showToast('Logging out...');
+  setTimeout(doLogout, 400);
 }
 
 // ── EmailJS helpers ─────────────────────────────────────────────────
@@ -4355,6 +4372,7 @@ function generateInvoice() {
     }
 
     DB.customerHistory[currentInvoiceCustomer] = { lastService: svcLabel === 'mixed' ? (washIronItems.length > washOnlyItems.length ? 'wash_iron' : 'wash_only') : svcLabel, lastDate: now };
+    _lastSavedInvoiceId = editingInvoiceId;
     currentViewInvoiceText = text;
     document.getElementById('inv-step-1').style.display = 'none';
     document.getElementById('inv-step-2').style.display = 'block';
@@ -4381,6 +4399,7 @@ function generateInvoice() {
     DB.finance.push({ id: 'fin_' + Date.now(), invoiceId: id, customer: customerName, month, amount: grand, paidAmount: 0, status: 'unpaid', paymentMethod: '-', date: finDate, dateModified: now });
     DB.deliveries.push({ id: 'del_' + Date.now(), invoiceId: id, customer: customerName, serviceTypes: svcLabel, collectionDate: currentInvoiceCollectionDate, expectedDate: delDate, status: 'pending', deliveredDate: null });
     DB.customerHistory[customerName] = { lastService: svcLabel === 'mixed' ? (washIronItems.length > washOnlyItems.length ? 'wash_iron' : 'wash_only') : svcLabel, lastDate: now };
+    _lastSavedInvoiceId = id;
     currentViewInvoiceText = text;
     document.getElementById('inv-step-1').style.display = 'none';
     document.getElementById('inv-step-2').style.display = 'block';
@@ -4577,7 +4596,7 @@ function renderInvoicesList() {
       <td style="font-family:'DM Mono',monospace;color:var(--accent);">${(inv.total||0).toLocaleString()}</td>
       <td>${payBadge}</td>
       <td>${sentBtn}</td>
-      <td style="display:flex;gap:0.3rem;flex-wrap:wrap;"><button class="btn btn-sm btn-secondary" onclick="viewInvoice('${inv.id}')">View</button> <button class="btn btn-sm" style="background:rgba(116,185,255,0.15);border:1px solid rgba(116,185,255,0.4);color:var(--info);" onclick="editInvoice('${inv.id}')">✏️ Edit</button> <button class="btn btn-sm btn-danger" onclick="deleteInvoice('${inv.id}')" title="Delete Invoice">✕</button></td>
+      <td style="display:flex;gap:0.3rem;flex-wrap:wrap;"><button class="btn btn-sm btn-secondary" onclick="viewInvoice('${inv.id}')">View</button> <button class="btn btn-sm" style="background:rgba(116,185,255,0.15);border:1px solid rgba(116,185,255,0.4);color:var(--info);" onclick="editInvoice('${inv.id}')">✏️ Edit</button> <button class="btn btn-sm" style="padding:0.3rem 0.6rem;background:rgba(232,197,71,0.15);border:1px solid rgba(232,197,71,0.5);color:var(--accent);" onclick="openDiscountModalForInvoice('${inv.id}')">🏷</button> <button class="btn btn-sm btn-danger" onclick="deleteInvoice('${inv.id}')" title="Delete Invoice">✕</button></td>
     </tr>`;
   }).join('');
   _disableViewerButtons();
@@ -5634,6 +5653,22 @@ function openDiscountModal(recId) {
   openModal('discount-modal');
 }
 
+function openDiscountModalForCurrentInvoice() {
+  if (!_canEdit('giving discounts')) return;
+  const invId = _lastSavedInvoiceId;
+  if (!invId) { showToast('No saved invoice found.', true); return; }
+  const fin = DB.finance.find(r => r.invoiceId === invId);
+  if (!fin) { showToast('Finance record not found for this invoice.', true); return; }
+  openDiscountModal(fin.id);
+}
+
+function openDiscountModalForInvoice(invId) {
+  if (!_canEdit('giving discounts')) return;
+  const fin = DB.finance.find(r => r.invoiceId === invId);
+  if (!fin) { showToast('No finance record linked to this invoice.', true); return; }
+  openDiscountModal(fin.id);
+}
+
 function applyDiscount() {
   const recId = document.getElementById('discount-fin-id').value;
   const discAmt = parseInt(document.getElementById('discount-amount').value) || 0;
@@ -5657,7 +5692,7 @@ function applyDiscount() {
     matchInv.paidAmount = rec.paidAmount || 0;
   }
   closeModal('discount-modal');
-  renderFinance(); renderOverview();
+  renderFinance(); renderOverview(); renderInvoicesList();
   saveData(true);
   showToast(`Discount of ${discAmt.toLocaleString()} FCFA applied to ${rec.customer} ✓`);
   logActivity('Discount Applied', `${rec.customer} — ${discAmt.toLocaleString()} FCFA discount${reason ? ' (' + reason + ')' : ''}`, 'finance');
@@ -6503,12 +6538,15 @@ function renderDueLookup() {
   el.innerHTML = html;
 }
 
+let _openDeliveryId = null;
+
 function markDelivered(id) { openDeliveryModal(id); }
 
 function openDeliveryModal(id) {
   if (!_canEdit('recording deliveries')) return;
   const d = DB.deliveries.find(x => x.id === id);
   if (!d) return;
+  _openDeliveryId = id;
   document.getElementById('partial-del-id').value = id;
   document.getElementById('partial-delivery-form').style.display = 'none';
   document.getElementById('partial-qty').value = '';
@@ -6528,6 +6566,7 @@ function openPartialDeliveryModal(id) {
   if (!_canEdit('recording deliveries')) return;
   const d = DB.deliveries.find(x => x.id === id);
   if (!d) return;
+  _openDeliveryId = id;
   document.getElementById('partial-del-id').value = id;
   document.getElementById('partial-delivery-form').style.display = 'block';
   document.getElementById('partial-qty').value = d.partialQty || '';
@@ -6541,18 +6580,19 @@ function openPartialDeliveryModal(id) {
 }
 
 function saveFullDelivery() {
-  const id = document.getElementById('partial-del-id').value;
+  if (!_canEdit('recording deliveries')) return;
+  const id = _openDeliveryId || document.getElementById('partial-del-id').value;
   const d = DB.deliveries.find(x => x.id === id);
-  if (!d) return;
+  if (!d) { showToast('Delivery record not found — please try again.', true); return; }
   d.status = 'delivered';
   d.deliveredDate = new Date().toISOString().split('T')[0];
   delete d.partialNote; delete d.partialQty;
   closeModal('partial-delivery-modal');
   renderDeliveries();
-  saveData(true);
   addNotification(`${d.customer}'s laundry marked as delivered ✓`, 'success');
   showToast(`${d.customer}'s laundry delivered ✓`);
   logActivity('Delivery', `Marked ${d.customer}'s laundry as fully delivered`);
+  saveData(true).then(saved => { if (!saved) showToast('Delivery marked ✓ — cloud sync pending', true); });
 }
 
 function showPartialDeliveryForm() {
@@ -6560,9 +6600,10 @@ function showPartialDeliveryForm() {
 }
 
 function savePartialDelivery() {
-  const id = document.getElementById('partial-del-id').value;
+  if (!_canEdit('recording deliveries')) return;
+  const id = _openDeliveryId || document.getElementById('partial-del-id').value;
   const d = DB.deliveries.find(x => x.id === id);
-  if (!d) return;
+  if (!d) { showToast('Delivery record not found — please try again.', true); return; }
   const qty = document.getElementById('partial-qty').value.trim();
   const note = document.getElementById('partial-note').value.trim();
   if (!note && !qty) { showToast('Please enter a delivery note or items count.', true); return; }
@@ -6572,11 +6613,11 @@ function savePartialDelivery() {
   d.partialDate = new Date().toISOString().split('T')[0];
   closeModal('partial-delivery-modal');
   renderDeliveries();
-  saveData(true);
   const detail = qty ? `${qty}` : note;
   addNotification(`${d.customer} — partial delivery recorded (${detail})`, 'info');
   showToast(`${d.customer} partial delivery saved ✓`);
   logActivity('Partial Delivery', `${d.customer} — ${detail}`);
+  saveData(true).then(saved => { if (!saved) showToast('Delivery marked ✓ — cloud sync pending', true); });
 }
 
 // ══════════════════════════════════════════════════════════════════
@@ -9083,18 +9124,102 @@ function loadDataFile(input) {
     try {
       const loaded = JSON.parse(e.target.result);
       input.value = '';
-      mergeLoadedData(loaded);
-      loadSettingsUI(); loadPriceEditTable();
-      requestAnimationFrame(() => {
-        renderAll();
-        saveData(true);
-        const ver = loaded._appVersion ? ' (v' + loaded._appVersion + ')' : ' (legacy file)';
-        logActivity('Data Restore', `Data file loaded and applied${ver}`, 'settings');
-        showToast('Data loaded & applied ✓' + ver);
-      });
+      _showImportModeModal(loaded);
     } catch (err) { input.value = ''; showToast('Failed to load data file: ' + err.message, true); }
   };
   reader.readAsText(file);
+}
+
+function _showImportModeModal(loaded) {
+  const existing = document.getElementById('import-mode-modal');
+  if (existing) existing.remove();
+  const ver = loaded._appVersion ? ' (v' + loaded._appVersion + ')' : '';
+  const counts = [];
+  if (Array.isArray(loaded.invoices)) counts.push(loaded.invoices.length + ' invoices');
+  if (Array.isArray(loaded.finance)) counts.push(loaded.finance.length + ' finance records');
+  if (Array.isArray(loaded.deliveries)) counts.push(loaded.deliveries.length + ' deliveries');
+  const summary = counts.length ? counts.join(', ') : 'no records detected';
+  window._pendingImportData = loaded;
+  const overlay = document.createElement('div');
+  overlay.id = 'import-mode-modal';
+  overlay.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.7);z-index:99999;display:flex;align-items:center;justify-content:center;padding:1rem;';
+  overlay.innerHTML = `
+    <div style="background:var(--surface);border:1px solid rgba(232,197,71,0.3);border-radius:14px;padding:1.8rem;max-width:480px;width:100%;font-family:'DM Sans',sans-serif;">
+      <div style="font-size:1.1rem;font-weight:700;margin-bottom:0.5rem;color:var(--text);">📥 Import Backup${ver}</div>
+      <div style="font-size:0.8rem;color:var(--muted);font-family:'DM Mono',monospace;margin-bottom:1rem;background:rgba(255,255,255,0.04);border:1px solid var(--border);border-radius:6px;padding:0.5rem 0.7rem;">${summary}</div>
+      <p style="font-size:0.83rem;color:var(--text);margin-bottom:0.5rem;font-weight:600;">How should this file be applied?</p>
+      <div style="display:flex;flex-direction:column;gap:0.6rem;margin-bottom:1rem;">
+        <button onclick="_applyImport('overwrite')" style="background:rgba(255,107,107,0.08);border:1px solid rgba(255,107,107,0.35);color:var(--text);border-radius:8px;padding:0.75rem 1rem;font-family:'DM Mono',monospace;font-size:0.8rem;cursor:pointer;text-align:left;">
+          📥 Full Overwrite<br><span style="font-weight:400;font-size:0.72rem;color:var(--muted);">Replace ALL data in the system with this file. Existing data not in the file will be lost.</span>
+        </button>
+        <button onclick="_applyImport('merge')" style="background:rgba(81,207,102,0.1);border:1px solid rgba(81,207,102,0.35);color:var(--text);border-radius:8px;padding:0.75rem 1rem;font-family:'DM Mono',monospace;font-size:0.8rem;cursor:pointer;text-align:left;">
+          🔄 Smart Update (Merge)<br><span style="font-weight:400;font-size:0.72rem;color:var(--muted);">Imported records overwrite matching system records. New import records are added. System records not in the file are kept.</span>
+        </button>
+      </div>
+      <button onclick="document.getElementById('import-mode-modal').remove();window._pendingImportData=null;" style="background:rgba(255,255,255,0.05);border:1px solid rgba(255,255,255,0.1);color:var(--muted);border-radius:8px;padding:0.55rem 1rem;font-family:'DM Mono',monospace;font-size:0.8rem;cursor:pointer;width:100%;">Cancel</button>
+    </div>`;
+  document.body.appendChild(overlay);
+}
+
+function _applyImport(mode) {
+  const loaded = window._pendingImportData;
+  document.getElementById('import-mode-modal')?.remove();
+  window._pendingImportData = null;
+  if (!loaded) return;
+
+  if (mode === 'overwrite') {
+    mergeLoadedData(loaded);
+  } else {
+    const CRITICAL_KEYS = ['invoices','finance','deliveries','materials','reminders','expenses'];
+    CRITICAL_KEYS.forEach(function(key) {
+      if (!Array.isArray(loaded[key])) return;
+      const incoming = loaded[key].map(migrateRecord).filter(Boolean);
+      if (!Array.isArray(DB[key]) || DB[key].length === 0) { DB[key] = incoming; return; }
+      const importMap = new Map(incoming.map(function(r) { return [r.id, r]; }));
+      const result = DB[key].map(function(r) { return (r && r.id && importMap.has(r.id)) ? importMap.get(r.id) : r; });
+      const systemIds = new Set(DB[key].map(function(r) { return r && r.id; }).filter(Boolean));
+      incoming.forEach(function(r) { if (r && r.id && !systemIds.has(r.id)) result.push(r); });
+      DB[key] = result;
+    });
+    ['notifications','deptHistory','adminActivityLog','activityLog'].forEach(function(key) {
+      if (!Array.isArray(loaded[key])) return;
+      const incoming = loaded[key].map(migrateRecord).filter(Boolean);
+      if (!Array.isArray(DB[key])) { DB[key] = incoming; return; }
+      const have = new Set(DB[key].map(function(r) { return r && r.id; }).filter(Boolean));
+      const newItems = incoming.filter(function(r) { return r && r.id && !have.has(r.id); });
+      DB[key] = DB[key].concat(newItems);
+    });
+    if (loaded.credentials && typeof loaded.credentials === 'object') DB.credentials = Object.assign({}, DB.credentials, loaded.credentials);
+    if (loaded.superUserCredentials && typeof loaded.superUserCredentials === 'object') DB.superUserCredentials = Object.assign({}, DB.superUserCredentials, loaded.superUserCredentials);
+    if (loaded.adminCredentials && typeof loaded.adminCredentials === 'object') DB.adminCredentials = Object.assign({}, DB.adminCredentials, loaded.adminCredentials);
+    if (Array.isArray(loaded.adminAccounts)) {
+      const aMap = new Map((DB.adminAccounts||[]).map(function(a) { return [a.id, a]; }));
+      loaded.adminAccounts.forEach(function(a) { if (a && a.id) aMap.set(a.id, a); });
+      DB.adminAccounts = Array.from(aMap.values());
+    }
+    if (loaded.settings && typeof loaded.settings === 'object') DB.settings = Object.assign({}, DB.settings, loaded.settings);
+    if (loaded.prices && typeof loaded.prices === 'object') Object.assign(DB.prices, loaded.prices);
+    if (loaded.customerHistory && typeof loaded.customerHistory === 'object') DB.customerHistory = Object.assign({}, DB.customerHistory, loaded.customerHistory);
+    if (Array.isArray(loaded.recycleBin)) {
+      const binMap = new Map((DB.recycleBin||[]).map(function(b) { return [b.id, b]; }));
+      loaded.recycleBin.forEach(function(b) { if (b && b.id && b.type && b.data) binMap.set(b.id, b); });
+      const nowMs = Date.now();
+      DB.recycleBin = Array.from(binMap.values()).filter(function(b) {
+        const exMs = typeof b.expiresAtMs === 'number' ? b.expiresAtMs : new Date(b.expiresAt||0).getTime();
+        return exMs > nowMs || (!b.expiresAt && !b.expiresAtMs);
+      });
+    }
+  }
+
+  loadSettingsUI(); loadPriceEditTable();
+  requestAnimationFrame(function() {
+    renderAll();
+    saveData(true);
+    const ver = loaded._appVersion ? ' (v' + loaded._appVersion + ')' : ' (legacy file)';
+    const modeLabel = mode === 'overwrite' ? 'Full overwrite' : 'Smart update merge';
+    logActivity('Data Import', modeLabel + ' applied' + ver, 'settings');
+    showToast((mode === 'overwrite' ? 'Data fully replaced' : 'Data smartly merged') + ' ✓' + ver);
+  });
 }
 
 function clearAllData() {
