@@ -2911,7 +2911,7 @@ async function loadCloudDataAndProceed() {
     if (msgEl) msgEl.textContent = '📵 Cannot reach cloud — please check your connection.';
   }
 
-  let rawMain    = null;
+  let rawMain     = null;
   let rawInvoices = null;
   let rawFinance  = null;
 
@@ -2919,28 +2919,62 @@ async function loadCloudDataAndProceed() {
     if (msgEl) msgEl.textContent = 'Loading your data from cloud...';
     try {
       const _fetchTimeout = new Promise(function(_, rej) { setTimeout(function() { rej(new Error('timeout')); }, 40000); });
-      // Load all three documents in parallel; also try legacy records_active for migration
+      // Load all four documents in parallel (records_active is legacy fallback)
       const results = await Promise.race([
-        Promise.all([ window._fbGetData(), window._fbGetInvoicesDoc(), window._fbGetFinanceDoc(), window._fbGetActiveRecords() ]),
+        Promise.all([
+          window._fbGetData(),
+          window._fbGetInvoicesDoc(),
+          window._fbGetFinanceDoc(),
+          window._fbGetActiveRecords()
+        ]),
         _fetchTimeout
       ]);
       rawMain     = results[0];
       rawInvoices = results[1];
       rawFinance  = results[2];
-      var rawActiveLegacy = results[3]; // only present during migration from records_active
-      // If new docs don't exist yet but old records_active does, use it as fallback
-      if (!rawInvoices && !rawFinance && rawActiveLegacy) {
+      var rawActiveLegacy = results[3];
+
+      // Fallback: if records_invoices missing, try records_active
+      if (!rawInvoices && rawActiveLegacy) {
         try {
           var legacyActive = JSON.parse(rawActiveLegacy);
-          // Split into the two new formats
-          if (Array.isArray(legacyActive.invoices))   rawInvoices = JSON.stringify({ invoices: legacyActive.invoices, deliveries: legacyActive.deliveries || [] });
-          if (Array.isArray(legacyActive.finance))    rawFinance  = JSON.stringify({ finance: legacyActive.finance });
+          if (Array.isArray(legacyActive.invoices))
+            rawInvoices = JSON.stringify({ invoices: legacyActive.invoices, deliveries: legacyActive.deliveries || [] });
+          if (!rawFinance && Array.isArray(legacyActive.finance))
+            rawFinance = JSON.stringify({ finance: legacyActive.finance });
+        } catch(e) {}
+      }
+
+      // Fallback: if records_invoices STILL missing, pull invoices/deliveries from appdata
+      // (covers first login after Firestore rules fixed but records_invoices not yet written)
+      if (!rawInvoices && rawMain) {
+        try {
+          var mainParsed = JSON.parse(rawMain);
+          if (Array.isArray(mainParsed.invoices) && mainParsed.invoices.length > 0) {
+            rawInvoices = JSON.stringify({ invoices: mainParsed.invoices, deliveries: mainParsed.deliveries || [] });
+            // Only show the migration toast once — not on every login
+            if (!sessionStorage.getItem('wf_migrated')) {
+              window._needsMigrationSave = true;
+            }
+          }
+        } catch(e) {}
+      }
+      // Fallback: if records_finance missing, pull finance from appdata
+      if (!rawFinance && rawMain) {
+        try {
+          var mainParsed2 = JSON.parse(rawMain);
+          if (Array.isArray(mainParsed2.finance) && mainParsed2.finance.length > 0) {
+            rawFinance = JSON.stringify({ finance: mainParsed2.finance });
+            if (!sessionStorage.getItem('wf_migrated')) {
+              window._needsMigrationSave = true;
+            }
+          }
         } catch(e) {}
       }
     } catch(e) { rawMain = null; rawInvoices = null; rawFinance = null; }
   }
 
-  // Load main appdata (settings, credentials, logs, etc.)
+  // Load main appdata (settings, credentials, logs — NOT invoices/finance/deliveries)
   if (rawMain) {
     try {
       const loadedMain = JSON.parse(rawMain);
@@ -2949,7 +2983,20 @@ async function loadCloudDataAndProceed() {
         // User already imported a backup — only adopt settings from cloud
         if (loadedMain.settings) Object.assign(DB.settings, loadedMain.settings);
       } else {
+        // Temporarily null out the record arrays so mergeLoadedData doesn't load
+        // them from appdata — invoices/finance/deliveries are loaded from their
+        // own dedicated documents (records_invoices / records_finance) below.
+        const _savedInv = loadedMain.invoices;
+        const _savedFin = loadedMain.finance;
+        const _savedDel = loadedMain.deliveries;
+        delete loadedMain.invoices;
+        delete loadedMain.finance;
+        delete loadedMain.deliveries;
         mergeLoadedData(loadedMain);
+        // Restore so the object is intact (in case the caller re-uses it)
+        if (_savedInv) loadedMain.invoices   = _savedInv;
+        if (_savedFin) loadedMain.finance    = _savedFin;
+        if (_savedDel) loadedMain.deliveries = _savedDel;
       }
       // Backfill expiresAtMs on legacy bin items
       if (Array.isArray(DB.recycleBin)) {
@@ -3022,12 +3069,17 @@ async function loadCloudDataAndProceed() {
   }
 
   setTimeout(() => {
+    // Always hide the loading prompt regardless of path
+    const _ip = document.getElementById('login-import-prompt');
+    const _lf = document.getElementById('login-form');
+    if (_ip) _ip.style.display = 'none';
+
     if (window._loginImportDone) {
+      // Backup was imported at login screen — app is already live, just save
       if (window._appDataReady) saveData(true);
       return;
     }
-    document.getElementById('login-import-prompt').style.display = 'none';
-    document.getElementById('login-form').style.display = 'block';
+    if (_lf) _lf.style.display = 'block';
     window._appDataReady = true;
     if (rawMain) {
       window._loginDataSavedAt = new Date().toISOString();
@@ -3035,7 +3087,10 @@ async function loadCloudDataAndProceed() {
     if (window._needsMigrationSave) {
       window._needsMigrationSave = false;
       saveData(true).then(function(ok) {
-        if (ok) showToast('✓ Storage restructured — saves will no longer hit the 1 MB limit!', false);
+        if (ok) {
+          try { sessionStorage.setItem('wf_migrated', '1'); } catch(e) {}
+          showToast('✓ Data migrated to new storage format successfully.', false);
+        }
       });
     }
     launchApp();
@@ -3052,7 +3107,7 @@ function mergeLoadedData(loaded, opts) {
   //  • loading a newer file into an older app  → unknown fields are preserved via spread/assign (fine)
   //  • loading a file from a very different major version → warn the user, but still load
   const _loadedVer   = parseFloat(loaded._appVersion) || 0;
-  const _currentVer  = parseFloat('15.0');
+  const _currentVer  = parseFloat('17.0');
   if (_loadedVer > _currentVer + 1) {
     // File is from a significantly newer version — warn, but do not block
     setTimeout(() => showToast('⚠ Backup from a newer app version (v' + loaded._appVersion + '). Some features may differ.', true), 500);
@@ -4552,7 +4607,7 @@ function updateBagPreview() {
 function generateInvoice() {
   if (!_canEdit('creating invoices')) return;
   if (currentInvoiceItems.length === 0) { showToast('No items!', true); return; }
-  if (window._lastPayloadBytes > 0 && window._lastPayloadBytes >= _STORAGE_LIMIT_BYTES) { _showStorageFullLockout(); return; }
+  if (((window._lastDocSizes||{}).invoices||0)*1024 >= _SINGLE_DOC_LIMIT_BYTES || ((window._lastDocSizes||{}).finance||0)*1024 >= _SINGLE_DOC_LIMIT_BYTES) { _showStorageFullLockout(); return; }
   const _genBtn = document.getElementById('inv-generate-btn');
   if (_genBtn && _genBtn.disabled) return;
   const _parcelingIncluded = document.getElementById('parceling-include')?.checked ?? true;
@@ -5734,7 +5789,7 @@ function _getPayRec() {
 
 function confirmPayment() {
   if (_paymentBusy) return;
-  if (window._lastPayloadBytes > 0 && window._lastPayloadBytes >= _STORAGE_LIMIT_BYTES) { _showStorageFullLockout(); return; }
+  if (((window._lastDocSizes||{}).invoices||0)*1024 >= _SINGLE_DOC_LIMIT_BYTES || ((window._lastDocSizes||{}).finance||0)*1024 >= _SINGLE_DOC_LIMIT_BYTES) { _showStorageFullLockout(); return; }
   const amt = parseInt(document.getElementById('pay-amount').value) || 0;
   const method = document.getElementById('pay-method').value;
   if (amt <= 0) { showToast('Enter an amount greater than 0.', true); return; }
@@ -5762,7 +5817,7 @@ function confirmPayment() {
 
 function confirmEditPayment() {
   if (_paymentBusy) return;
-  if (window._lastPayloadBytes > 0 && window._lastPayloadBytes >= _STORAGE_LIMIT_BYTES) { _showStorageFullLockout(); return; }
+  if (((window._lastDocSizes||{}).invoices||0)*1024 >= _SINGLE_DOC_LIMIT_BYTES || ((window._lastDocSizes||{}).finance||0)*1024 >= _SINGLE_DOC_LIMIT_BYTES) { _showStorageFullLockout(); return; }
   const newPaid = Math.max(0, parseInt(document.getElementById('pay-edit-amount').value) || 0);
   const method = document.getElementById('pay-edit-method').value;
   const rec = _getPayRec();
@@ -9371,7 +9426,12 @@ let _storageWarnedLevel = 0; // highest % threshold already warned this session
 function _updateStorageMeterUI() {
   const bytes = window._lastPayloadBytes || 0;
   if (!bytes) return;
-  const pct = Math.min(Math.round(bytes / _STORAGE_LIMIT_BYTES * 100), 100);
+  // Show percentage based on the largest single document, not the combined total.
+  // The bottleneck is whichever individual doc is closest to its 900 KB limit.
+  const docSizes = window._lastDocSizes || {};
+  const largestDocKB = Math.max(docSizes.main || 0, docSizes.invoices || 0, docSizes.finance || 0);
+  const largestDocBytes = largestDocKB * 1024;
+  const pct = Math.min(Math.round(largestDocBytes / _SINGLE_DOC_LIMIT_BYTES * 100), 100);
   const kb  = Math.round(bytes / 1024);
   const color = pct >= 90 ? 'var(--danger)' : pct >= 75 ? 'var(--accent)' : pct >= 60 ? '#f0a500' : 'var(--success)';
 
@@ -9383,33 +9443,37 @@ function _updateStorageMeterUI() {
 
   if (bar) { bar.style.width = pct + '%'; bar.style.background = color; }
   if (lbl) { lbl.textContent = pct + '% used'; lbl.style.color = color; }
-  if (kbt) kbt.textContent = kb.toLocaleString() + ' KB across 3 cloud documents (each limit: ~900 KB)';
+  if (kbt) kbt.textContent = kb.toLocaleString() + ' KB total across 3 documents — largest: ' + largestDocKB + ' KB / 900 KB limit';
   if (dot) {
     dot.style.display = 'inline-block';
     dot.style.background = color;
-    dot.title = 'Cloud storage: ' + pct + '% (' + kb + ' KB / 1,024 KB) — click to view in Settings';
+    dot.title = 'Cloud storage: largest doc ' + largestDocKB + ' KB / 900 KB (' + pct + '%) — click to view in Settings';
   }
   if (bkd && window._lastPayloadBreakdown) {
     const b = window._lastPayloadBreakdown;
     bkd.style.display = '';
     bkd.innerHTML =
-      '📦 Invoices: <b>' + b.invoices + ' KB</b> &nbsp;|&nbsp; ' +
-      '💰 Finance: <b>' + b.finance + ' KB</b> &nbsp;|&nbsp; ' +
-      '🚚 Deliveries: <b>' + b.deliveries + ' KB</b><br>' +
-      '📋 Activity logs: <b>' + b.logs + ' KB</b> &nbsp;|&nbsp; ' +
-      '🗑 Recycle bin: <b>' + b.recycle + ' KB</b> &nbsp;|&nbsp; ' +
-      '⚙ Other: <b>' + b.other + ' KB</b>';
+      '📦 Invoices doc: <b>' + (docSizes.invoices || 0) + ' KB</b> &nbsp;|&nbsp; ' +
+      '💰 Finance doc: <b>' + (docSizes.finance || 0) + ' KB</b> &nbsp;|&nbsp; ' +
+      '⚙ Appdata doc: <b>' + (docSizes.main || 0) + ' KB</b><br>' +
+      '&nbsp;&nbsp;↳ Invoices: <b>' + b.invoices + ' KB</b> &nbsp;|&nbsp; ' +
+      'Finance: <b>' + b.finance + ' KB</b> &nbsp;|&nbsp; ' +
+      'Deliveries: <b>' + b.deliveries + ' KB</b> &nbsp;|&nbsp; ' +
+      'Logs: <b>' + b.logs + ' KB</b> &nbsp;|&nbsp; ' +
+      'Bin: <b>' + b.recycle + ' KB</b>';
   }
 }
 
 function _checkStorageLevel() {
   const bytes = window._lastPayloadBytes || 0;
   if (!bytes) return;
-  const pct = Math.min(Math.round(bytes / _STORAGE_LIMIT_BYTES * 100), 100);
+  // Check largest single document against per-doc limit
+  const docSizes = window._lastDocSizes || {};
+  const largestDocBytes = Math.max(docSizes.main || 0, docSizes.invoices || 0, docSizes.finance || 0) * 1024;
+  const pct = Math.min(Math.round(largestDocBytes / _SINGLE_DOC_LIMIT_BYTES * 100), 100);
   _updateStorageMeterUI();
 
-  if (bytes >= _STORAGE_LIMIT_BYTES) {
-    // Storage genuinely full — lock the app immediately
+  if (largestDocBytes >= _SINGLE_DOC_LIMIT_BYTES) {
     setTimeout(() => _showStorageFullLockout(), 800);
     return;
   }
@@ -12208,7 +12272,7 @@ function _ruleExtract(raw) {
 
 function aiConfirmImport() {
   if (_aiImportBusy) return;
-  if (window._lastPayloadBytes > 0 && window._lastPayloadBytes >= _STORAGE_LIMIT_BYTES) { _showStorageFullLockout(); return; }
+  if (((window._lastDocSizes||{}).invoices||0)*1024 >= _SINGLE_DOC_LIMIT_BYTES || ((window._lastDocSizes||{}).finance||0)*1024 >= _SINGLE_DOC_LIMIT_BYTES) { _showStorageFullLockout(); return; }
   const customerName = (document.getElementById('ai-customer-name')?.value || '').trim();
   const invoiceDate  = document.getElementById('ai-invoice-date')?.value  || '';
   const collDate     = document.getElementById('ai-collection-date')?.value || '';
@@ -12413,6 +12477,10 @@ document.addEventListener('DOMContentLoaded', () => {
       }
     });
   }
+
+  // Always reset import state on page load — never carry over from a previous session
+  window._loginImportDone = false;
+  window._needsMigrationSave = false;
 
   // ── Logout detection: if just logged out, show clean login screen ──────
   try {
