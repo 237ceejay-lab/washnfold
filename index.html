@@ -143,9 +143,15 @@ window._fbListenData             = function(){ return null; };
 // v17: multi-document stubs (upgraded by _initFirebase when Firebase loads)
 window._fbSetActiveRecords    = async function() { return false; };
 window._fbGetActiveRecords    = async function() { return null; };
+window._fbSetInvoicesDoc      = async function() { return false; };
+window._fbGetInvoicesDoc      = async function() { return null; };
+window._fbSetFinanceDoc       = async function() { return false; };
+window._fbGetFinanceDoc       = async function() { return null; };
 window._fbSetArchive          = async function() { return false; };
 window._fbGetArchive          = async function() { return null; };
 window._fbListArchives        = async function() { return []; };
+window._fbListenInvoicesDoc   = function() { return null; };
+window._fbListenFinanceDoc    = function() { return null; };
 window._fbListenActiveRecords = function() { return null; };
 
 // ── Step 2: Real Firebase init using Compat SDK (called after scripts load) ──
@@ -183,17 +189,43 @@ window._initFirebase = function() {
       } catch(e) { window._fbLastSaveError = e; return false; }
     };
 
-    // ── v17: write active records (invoices/finance/deliveries ≤ 90 days) ─────
-    window._fbSetActiveRecords = async function(jsonStr) {
+    // ── v17: write invoices+deliveries document ───────────────────────────────
+    window._fbSetInvoicesDoc = async function(jsonStr) {
       try {
-        await db.collection('washnfold').doc('records_active').set({
+        await db.collection('washnfold').doc('records_invoices').set({
           payload: jsonStr, updatedAt: new Date().toISOString()
         });
         return true;
       } catch(e) { return false; }
     };
 
-    // ── v17: read active records ──────────────────────────────────────────────
+    // ── v17: read invoices+deliveries document ────────────────────────────────
+    window._fbGetInvoicesDoc = async function() {
+      try {
+        var snap = await db.collection('washnfold').doc('records_invoices').get();
+        return snap.exists ? (snap.data().payload || null) : null;
+      } catch(e) { return null; }
+    };
+
+    // ── v17: write finance document ───────────────────────────────────────────
+    window._fbSetFinanceDoc = async function(jsonStr) {
+      try {
+        await db.collection('washnfold').doc('records_finance').set({
+          payload: jsonStr, updatedAt: new Date().toISOString()
+        });
+        return true;
+      } catch(e) { return false; }
+    };
+
+    // ── v17: read finance document ────────────────────────────────────────────
+    window._fbGetFinanceDoc = async function() {
+      try {
+        var snap = await db.collection('washnfold').doc('records_finance').get();
+        return snap.exists ? (snap.data().payload || null) : null;
+      } catch(e) { return null; }
+    };
+
+    // ── legacy: kept so old records_active doc is still readable on migration ─
     window._fbGetActiveRecords = async function() {
       try {
         var snap = await db.collection('washnfold').doc('records_active').get();
@@ -225,21 +257,28 @@ window._initFirebase = function() {
         var snap = await db.collection('washnfold').get();
         var keys = [];
         snap.forEach(function(d) {
-          if (d.id.startsWith('records_') && d.id !== 'records_active')
+          if (d.id.startsWith('records_') && d.id !== 'records_active' &&
+              d.id !== 'records_invoices' && d.id !== 'records_finance')
             keys.push(d.id.replace('records_', ''));
         });
         return keys.sort().reverse();
       } catch(e) { return []; }
     };
 
-    // ── v17: listen to active records changes ────────────────────────────────
-    window._fbListenActiveRecords = function(cb) {
+    // ── v17: listen to invoices+deliveries changes ────────────────────────────
+    window._fbListenInvoicesDoc = function(cb) {
       try {
-        return db.collection('washnfold').doc('records_active').onSnapshot(function(snap) {
-          if (snap.exists) {
-            var d = snap.data();
-            if (cb && d.payload) cb(d.payload, d.updatedAt);
-          }
+        return db.collection('washnfold').doc('records_invoices').onSnapshot(function(snap) {
+          if (snap.exists) { var d = snap.data(); if (cb && d.payload) cb(d.payload, d.updatedAt); }
+        });
+      } catch(e) { return null; }
+    };
+
+    // ── v17: listen to finance changes ────────────────────────────────────────
+    window._fbListenFinanceDoc = function(cb) {
+      try {
+        return db.collection('washnfold').doc('records_finance').onSnapshot(function(snap) {
+          if (snap.exists) { var d = snap.data(); if (cb && d.payload) cb(d.payload, d.updatedAt); }
         });
       } catch(e) { return null; }
     };
@@ -2872,21 +2911,33 @@ async function loadCloudDataAndProceed() {
     if (msgEl) msgEl.textContent = '📵 Cannot reach cloud — please check your connection.';
   }
 
-  let rawMain   = null;
-  let rawActive = null;
+  let rawMain    = null;
+  let rawInvoices = null;
+  let rawFinance  = null;
 
   if (!window._firebaseBlocked && window._fbGetData) {
     if (msgEl) msgEl.textContent = 'Loading your data from cloud...';
     try {
       const _fetchTimeout = new Promise(function(_, rej) { setTimeout(function() { rej(new Error('timeout')); }, 40000); });
-      // Load appdata and records_active in parallel
+      // Load all three documents in parallel; also try legacy records_active for migration
       const results = await Promise.race([
-        Promise.all([ window._fbGetData(), window._fbGetActiveRecords() ]),
+        Promise.all([ window._fbGetData(), window._fbGetInvoicesDoc(), window._fbGetFinanceDoc(), window._fbGetActiveRecords() ]),
         _fetchTimeout
       ]);
-      rawMain   = results[0];
-      rawActive = results[1];
-    } catch(e) { rawMain = null; rawActive = null; }
+      rawMain     = results[0];
+      rawInvoices = results[1];
+      rawFinance  = results[2];
+      var rawActiveLegacy = results[3]; // only present during migration from records_active
+      // If new docs don't exist yet but old records_active does, use it as fallback
+      if (!rawInvoices && !rawFinance && rawActiveLegacy) {
+        try {
+          var legacyActive = JSON.parse(rawActiveLegacy);
+          // Split into the two new formats
+          if (Array.isArray(legacyActive.invoices))   rawInvoices = JSON.stringify({ invoices: legacyActive.invoices, deliveries: legacyActive.deliveries || [] });
+          if (Array.isArray(legacyActive.finance))    rawFinance  = JSON.stringify({ finance: legacyActive.finance });
+        } catch(e) {}
+      }
+    } catch(e) { rawMain = null; rawInvoices = null; rawFinance = null; }
   }
 
   // Load main appdata (settings, credentials, logs, etc.)
@@ -2918,32 +2969,49 @@ async function loadCloudDataAndProceed() {
     if (msgEl) msgEl.textContent = 'No previous session found — starting fresh.';
   }
 
-  // Load active records (invoices/finance/deliveries ≤ 90 days)
-  if (rawActive) {
+  // Load invoices + deliveries
+  if (rawInvoices) {
     try {
-      const loadedActive = JSON.parse(rawActive);
+      const loadedInv = JSON.parse(rawInvoices);
       if (!window._loginImportDone) {
-        ['invoices', 'finance', 'deliveries'].forEach(function(key) {
-          if (!Array.isArray(loadedActive[key])) return;
-          DB[key] = loadedActive[key].map(migrateRecord).filter(Boolean);
-        });
+        if (Array.isArray(loadedInv.invoices))   DB.invoices   = loadedInv.invoices.map(migrateRecord).filter(Boolean);
+        if (Array.isArray(loadedInv.deliveries)) DB.deliveries = loadedInv.deliveries.map(migrateRecord).filter(Boolean);
       } else {
-        // Import already done — union merge only
-        ['invoices', 'finance', 'deliveries'].forEach(function(key) {
-          if (!Array.isArray(loadedActive[key])) return;
-          const incoming = loadedActive[key].map(migrateRecord).filter(Boolean);
+        ['invoices','deliveries'].forEach(function(key) {
+          if (!Array.isArray(loadedInv[key])) return;
+          const incoming = loadedInv[key].map(migrateRecord).filter(Boolean);
           if (!Array.isArray(DB[key]) || DB[key].length === 0) { DB[key] = incoming; return; }
           const _have = new Set(DB[key].map(r => r && r.id).filter(Boolean));
           const _new  = incoming.filter(r => r && r.id && !_have.has(r.id));
           if (_new.length > 0) DB[key] = DB[key].concat(_new.map(migrateRecord).filter(Boolean));
         });
       }
-      if (msgEl) msgEl.textContent = '✓ All data loaded from cloud';
-    } catch(e) { /* non-fatal — active records may not exist yet on first run */ }
+    } catch(e) {}
   }
 
-  // Migration: if appdata had invoices (old single-doc format), save in new split format
-  if (rawMain && !rawActive) {
+  // Load finance
+  if (rawFinance) {
+    try {
+      const loadedFin = JSON.parse(rawFinance);
+      if (!window._loginImportDone) {
+        if (Array.isArray(loadedFin.finance)) DB.finance = loadedFin.finance.map(migrateRecord).filter(Boolean);
+      } else {
+        if (Array.isArray(loadedFin.finance)) {
+          const incoming = loadedFin.finance.map(migrateRecord).filter(Boolean);
+          if (!Array.isArray(DB.finance) || DB.finance.length === 0) { DB.finance = incoming; }
+          else {
+            const _have = new Set(DB.finance.map(r => r && r.id).filter(Boolean));
+            const _new  = incoming.filter(r => r && r.id && !_have.has(r.id));
+            if (_new.length > 0) DB.finance = DB.finance.concat(_new.map(migrateRecord).filter(Boolean));
+          }
+        }
+      }
+      if (msgEl) msgEl.textContent = '✓ All data loaded from cloud';
+    } catch(e) {}
+  }
+
+  // Migration: if appdata had invoices (old single-doc format), trigger split save
+  if (rawMain && !rawInvoices && !rawFinance) {
     try {
       const _old = JSON.parse(rawMain);
       if (Array.isArray(_old.invoices) && _old.invoices.length > 0) {
@@ -3257,25 +3325,32 @@ function _performLogout(isAuto) {
         .then(function(ok) { if (ok) window._archivedMonths.add(mk); });
     }
   });
-  const activeObj = {
-    _type: 'active_records', _savedAt: new Date().toISOString(),
-    invoices:   _logoutPartition.active.invoices,
-    finance:    _logoutPartition.active.finance,
-    deliveries: _logoutPartition.active.deliveries
-  };
-  const mainJsonStr   = JSON.stringify(saveObj);
-  const activeJsonStr = JSON.stringify(activeObj);
+  const _logoutSlimInv = _logoutPartition.active.invoices.map(function(inv) {
+    var o = Object.assign({}, inv);
+    delete o.invoiceText; delete o._importedViaAI; delete o.customer;
+    delete o.expectedDate; delete o.status; return o;
+  });
+  const _logoutSlimDel = _logoutPartition.active.deliveries.map(function(del) {
+    var o = Object.assign({}, del); delete o.expectedDate; return o;
+  });
+  const invoicesObj = { _type: 'records_invoices', _savedAt: new Date().toISOString(), invoices: _logoutSlimInv, deliveries: _logoutSlimDel };
+  const financeObj  = { _type: 'records_finance',  _savedAt: new Date().toISOString(), finance:  _logoutPartition.active.finance };
+  const mainJsonStr     = JSON.stringify(saveObj);
+  const invoicesJsonStr = JSON.stringify(invoicesObj);
+  const financeJsonStr  = JSON.stringify(financeObj);
   showToast('Logging out ✓');
   if (window._fbSetData) {
     try {
       const _saveDone = Promise.all([
         window._fbSetData(mainJsonStr),
-        window._fbSetActiveRecords(activeJsonStr)
+        window._fbSetInvoicesDoc(invoicesJsonStr),
+        window._fbSetFinanceDoc(financeJsonStr)
       ])
       .catch(function() {
         return Promise.all([
           new Promise(function(r) { setTimeout(r, 1500); }).then(function() { return window._fbSetData(mainJsonStr); }),
-          new Promise(function(r) { setTimeout(r, 1500); }).then(function() { return window._fbSetActiveRecords(activeJsonStr); })
+          new Promise(function(r) { setTimeout(r, 1500); }).then(function() { return window._fbSetInvoicesDoc(invoicesJsonStr); }),
+          new Promise(function(r) { setTimeout(r, 1500); }).then(function() { return window._fbSetFinanceDoc(financeJsonStr); })
         ]);
       })
       .catch(function() {});
@@ -3904,7 +3979,7 @@ function initApp() {
     if (_dataUnsubscribe) _dataUnsubscribe();
     if (window._activeRecordsUnsubscribe) window._activeRecordsUnsubscribe();
 
-    function _handleRemoteSnapshot(payload, updatedAt, sourceIsActive) {
+    function _handleRemoteSnapshot(payload, updatedAt, source) {
       if (_lastRemoteUpdate && updatedAt <= _lastRemoteUpdate) return;
       _lastRemoteUpdate = updatedAt;
       const updateAge = Date.now() - new Date(updatedAt).getTime();
@@ -3912,47 +3987,50 @@ function initApp() {
       if (window._loginDataSavedAt && updatedAt && updatedAt < window._loginDataSavedAt) return;
       try {
         const loaded = JSON.parse(payload);
-        if (sourceIsActive) {
-          // Active records snapshot — only merge invoices/finance/deliveries
-          const savedCreds2 = {
-            credentials: DB.credentials, superUserCredentials: DB.superUserCredentials,
-            adminCredentials: DB.adminCredentials, adminAccounts: DB.adminAccounts
-          };
+
+        if (source === 'invoices') {
+          // Invoices+deliveries snapshot
+          const savedCreds2 = { credentials: DB.credentials, superUserCredentials: DB.superUserCredentials, adminCredentials: DB.adminCredentials, adminAccounts: DB.adminAccounts };
           const _snapshotMs2 = updatedAt ? new Date(updatedAt).getTime() : 0;
           function _idMs2(id) { const m = id && id.match(/(\d{13})/); return m ? parseInt(m[1]) : 0; }
           const _loadedInvIds2 = new Set((loaded.invoices   || []).map(r => r.id));
-          const _loadedFinIds2 = new Set((loaded.finance    || []).map(r => r.id));
           const _loadedDelIds2 = new Set((loaded.deliveries || []).map(r => r.id));
           const _localNewInv2  = DB.invoices.filter(r   => _idMs2(r.id) > _snapshotMs2 && !_loadedInvIds2.has(r.id));
-          const _localNewFin2  = DB.finance.filter(r    => _idMs2(r.id) > _snapshotMs2 && !_loadedFinIds2.has(r.id));
           const _localNewDel2  = DB.deliveries.filter(r => _idMs2(r.id) > _snapshotMs2 && !_loadedDelIds2.has(r.id));
-
-          DB.invoices   = (loaded.invoices   || []).map(migrateRecord).filter(Boolean);
-          DB.finance    = (loaded.finance    || []).map(migrateRecord).filter(Boolean);
-          DB.deliveries = (loaded.deliveries || []).map(migrateRecord).filter(Boolean);
-
+          if (Array.isArray(loaded.invoices))   DB.invoices   = loaded.invoices.map(migrateRecord).filter(Boolean);
+          if (Array.isArray(loaded.deliveries)) DB.deliveries = loaded.deliveries.map(migrateRecord).filter(Boolean);
           let _hadNew2 = false;
           if (_localNewInv2.length)  { DB.invoices   = [..._localNewInv2,  ...DB.invoices];   _hadNew2 = true; }
-          if (_localNewFin2.length)  { DB.finance    = [..._localNewFin2,  ...DB.finance];    _hadNew2 = true; }
           if (_localNewDel2.length)  { DB.deliveries = [..._localNewDel2,  ...DB.deliveries]; _hadNew2 = true; }
-
           Object.assign(DB, savedCreds2);
           _reconcileWithBin();
           renderAll();
           if (_hadNew2) saveData(true);
 
+        } else if (source === 'finance') {
+          // Finance snapshot
+          const savedCreds3 = { credentials: DB.credentials, superUserCredentials: DB.superUserCredentials, adminCredentials: DB.adminCredentials, adminAccounts: DB.adminAccounts };
+          const _snapshotMs3 = updatedAt ? new Date(updatedAt).getTime() : 0;
+          function _idMs3(id) { const m = id && id.match(/(\d{13})/); return m ? parseInt(m[1]) : 0; }
+          const _loadedFinIds3 = new Set((loaded.finance || []).map(r => r.id));
+          const _localNewFin3  = DB.finance.filter(r => _idMs3(r.id) > _snapshotMs3 && !_loadedFinIds3.has(r.id));
+          if (Array.isArray(loaded.finance)) DB.finance = loaded.finance.map(migrateRecord).filter(Boolean);
+          let _hadNew3 = false;
+          if (_localNewFin3.length) { DB.finance = [..._localNewFin3, ...DB.finance]; _hadNew3 = true; }
+          Object.assign(DB, savedCreds3);
+          DB.finance = DB.finance.filter(r => !(DB.deletedSeedIds||[]).includes(r.id));
+          renderAll();
+          if (_hadNew3) saveData(true);
+
         } else {
-          // Main appdata snapshot — merge settings/logs/etc., preserve records from records_active
-          const savedCreds = {
-            credentials: DB.credentials, superUserCredentials: DB.superUserCredentials,
-            adminCredentials: DB.adminCredentials, adminAccounts: DB.adminAccounts
-          };
+          // Main appdata snapshot — merge settings/logs, preserve records from split docs
+          const savedCreds = { credentials: DB.credentials, superUserCredentials: DB.superUserCredentials, adminCredentials: DB.adminCredentials, adminAccounts: DB.adminAccounts };
           const savedDeletedSeeds = [...(DB.deletedSeedIds || [])];
           const savedAppDownloads = DB.appDownloads ? [...DB.appDownloads] : [];
           const savedRecycleBin   = DB.recycleBin   ? [...DB.recycleBin]   : [];
-          const savedInvoices     = [...DB.invoices];
-          const savedFinance      = [...DB.finance];
-          const savedDeliveries   = [...DB.deliveries];
+          const savedInvoices   = [...DB.invoices];
+          const savedFinance    = [...DB.finance];
+          const savedDeliveries = [...DB.deliveries];
           const savedSettings_local = {
             lastDailyLogDate: DB.settings.lastDailyLogDate, lastLogSentAt: DB.settings.lastLogSentAt,
             localDownloadIntervalHours: DB.settings.localDownloadIntervalHours,
@@ -3962,14 +4040,8 @@ function initApp() {
             binAccessList: DB.settings.binAccessList, binManagerBlocked: DB.settings.binManagerBlocked,
             downloadsAccessList: DB.settings.downloadsAccessList,
           };
-
           mergeLoadedData(loaded, { unionMerge: true });
-
-          // Restore records — authoritative source is records_active, not appdata
-          DB.invoices   = savedInvoices;
-          DB.finance    = savedFinance;
-          DB.deliveries = savedDeliveries;
-
+          DB.invoices = savedInvoices; DB.finance = savedFinance; DB.deliveries = savedDeliveries;
           Object.assign(DB, savedCreds);
           if (!DB.deletedSeedIds) DB.deletedSeedIds = [];
           savedDeletedSeeds.forEach(id => { if (!DB.deletedSeedIds.includes(id)) DB.deletedSeedIds.push(id); });
@@ -3977,15 +4049,12 @@ function initApp() {
           Object.assign(DB.settings, savedSettings_local);
           if (savedAppDownloads.length > 0) DB.appDownloads = savedAppDownloads;
           if (savedRecycleBin.length > (DB.recycleBin || []).length) {
-            const _nowMs2 = Date.now();
-            const _binMap2 = new Map();
+            const _nowMs2 = Date.now(); const _binMap2 = new Map();
             (DB.recycleBin || []).forEach(b => { if (b && b.id) _binMap2.set(b.id, b); });
             savedRecycleBin.forEach(b => {
               if (!b || !b.id) return;
               const exMs = typeof b.expiresAtMs === 'number' ? b.expiresAtMs : new Date(b.expiresAt || 0).getTime();
-              if (exMs > _nowMs2 || (!b.expiresAt && !b.expiresAtMs)) {
-                if (!_binMap2.has(b.id)) _binMap2.set(b.id, b);
-              }
+              if (exMs > _nowMs2 || (!b.expiresAt && !b.expiresAtMs)) { if (!_binMap2.has(b.id)) _binMap2.set(b.id, b); }
             });
             DB.recycleBin = [..._binMap2.values()].sort((a,b) => (b.deletedAt||'') > (a.deletedAt||'') ? 1 : -1);
           }
@@ -4002,11 +4071,16 @@ function initApp() {
     }
 
     _dataUnsubscribe = window._fbListenData(function(payload, updatedAt) {
-      _handleRemoteSnapshot(payload, updatedAt, false);
+      _handleRemoteSnapshot(payload, updatedAt, 'main');
     });
-    window._activeRecordsUnsubscribe = window._fbListenActiveRecords
-      ? window._fbListenActiveRecords(function(payload, updatedAt) {
-          _handleRemoteSnapshot(payload, updatedAt, true);
+    window._activeRecordsUnsubscribe = window._fbListenInvoicesDoc
+      ? window._fbListenInvoicesDoc(function(payload, updatedAt) {
+          _handleRemoteSnapshot(payload, updatedAt, 'invoices');
+        })
+      : null;
+    window._financeDocUnsubscribe = window._fbListenFinanceDoc
+      ? window._fbListenFinanceDoc(function(payload, updatedAt) {
+          _handleRemoteSnapshot(payload, updatedAt, 'finance');
         })
       : null;
   }
@@ -9290,7 +9364,7 @@ let _paymentBusy = false;
 let _aiImportBusy = false;
 
 // ── Cloud Storage Meter & Progressive Warnings ────────────────────────────────
-const _STORAGE_LIMIT_BYTES = 1887437; // v17: 1.8 MiB combined ceiling (two docs, 900 KB safe limit each)
+const _STORAGE_LIMIT_BYTES = 2764800; // v17: 3 docs × 900 KB safe ceiling each
 const _SINGLE_DOC_LIMIT_BYTES = 921600; // 900 KB per-document trim threshold
 let _storageWarnedLevel = 0; // highest % threshold already warned this session
 
@@ -9309,7 +9383,7 @@ function _updateStorageMeterUI() {
 
   if (bar) { bar.style.width = pct + '%'; bar.style.background = color; }
   if (lbl) { lbl.textContent = pct + '% used'; lbl.style.color = color; }
-  if (kbt) kbt.textContent = kb.toLocaleString() + ' KB across 2 cloud documents (combined limit: ~1,800 KB)';
+  if (kbt) kbt.textContent = kb.toLocaleString() + ' KB across 3 cloud documents (each limit: ~900 KB)';
   if (dot) {
     dot.style.display = 'inline-block';
     dot.style.background = color;
@@ -9437,8 +9511,9 @@ function _measureCurrentPayload() {
   if (!window._appDataReady || typeof _partitionRecords !== 'function') return;
   try {
     const partition = _partitionRecords(DB.invoices, DB.finance, DB.deliveries);
-    const activeObj = { invoices: partition.active.invoices, finance: partition.active.finance, deliveries: partition.active.deliveries };
-    const mainObj = {
+    const invJson  = JSON.stringify({ invoices: partition.active.invoices, deliveries: partition.active.deliveries });
+    const finJson  = JSON.stringify({ finance: partition.active.finance });
+    const mainObj  = {
       settings: DB.settings, prices: DB.prices, customerHistory: DB.customerHistory || {},
       materials: DB.materials || [], reminders: DB.reminders || [], expenses: DB.expenses || [],
       notifications: (DB.notifications || []).slice(0, 20), deptHistory: DB.deptHistory || [],
@@ -9446,9 +9521,8 @@ function _measureCurrentPayload() {
       activityLog: (DB.activityLog || []).slice(0, 200), adminActivityLog: (DB.adminActivityLog || []).slice(0, 100),
       credentials: DB.credentials, adminAccounts: DB.adminAccounts || []
     };
-    const mainJson   = JSON.stringify(mainObj);
-    const activeJson = JSON.stringify(activeObj);
-    window._lastPayloadBytes = mainJson.length + activeJson.length;
+    const mainJson = JSON.stringify(mainObj);
+    window._lastPayloadBytes = mainJson.length + invJson.length + finJson.length;
     const _kb = function(arr) { return Math.round(JSON.stringify(arr || []).length / 1024); };
     window._lastPayloadBreakdown = {
       invoices:   _kb(partition.active.invoices),
@@ -9564,14 +9638,35 @@ async function _doCloudSave() {
       }
     });
 
-    // 3. Active records payload
-    var activeObj = {
-      _type: 'active_records', _savedAt: _nowISO,
-      invoices:   partition.active.invoices,
-      finance:    partition.active.finance,
-      deliveries: partition.active.deliveries
+    // 3. Invoices+deliveries payload (slim — strip redundant fields)
+    var slimInvoices = partition.active.invoices.map(function(inv) {
+      var out = Object.assign({}, inv);
+      out.pop = undefined; // safety
+      delete out.invoiceText;
+      delete out._importedViaAI;
+      delete out.customer;       // duplicate of customerName
+      delete out.expectedDate;   // duplicate of deliveryDate
+      delete out.status;         // duplicate of paymentStatus
+      return out;
+    });
+    var slimDeliveries = partition.active.deliveries.map(function(del) {
+      var out = Object.assign({}, del);
+      delete out.expectedDate;   // already in invoice as deliveryDate
+      return out;
+    });
+    var invoicesObj = {
+      _type: 'records_invoices', _savedAt: _nowISO,
+      invoices:   slimInvoices,
+      deliveries: slimDeliveries
     };
-    var activeJsonStr = JSON.stringify(activeObj);
+    var invoicesJsonStr = JSON.stringify(invoicesObj);
+
+    // 4. Finance payload
+    var financeObj = {
+      _type: 'records_finance', _savedAt: _nowISO,
+      finance: partition.active.finance
+    };
+    var financeJsonStr = JSON.stringify(financeObj);
 
     // 4. Main appdata payload (no big arrays)
     var saveObj = {
@@ -9602,7 +9697,7 @@ async function _doCloudSave() {
 
     var mainJsonStr = JSON.stringify(saveObj);
 
-    // 5. Emergency trim if either doc is still large
+    // 5. Emergency trim if main appdata is too large
     if (mainJsonStr.length > _SINGLE_DOC_LIMIT_BYTES) {
       saveObj.activityLog      = (DB.activityLog      || []).slice(0, 50);
       saveObj.adminActivityLog = (DB.adminActivityLog || []).slice(0, 30);
@@ -9611,18 +9706,21 @@ async function _doCloudSave() {
       mainJsonStr = JSON.stringify(saveObj);
       setTimeout(function() { showToast('ℹ Storage auto-cleanup: logs trimmed. Download a backup in Settings.', false); }, 1500);
     }
-    if (activeJsonStr.length > _SINGLE_DOC_LIMIT_BYTES) {
-      setTimeout(function() { showToast('⚠ Active records are large (' + Math.round(activeJsonStr.length/1024) + ' KB). Consider checking the Archives page.', true); }, 1500);
+    if (invoicesJsonStr.length > _SINGLE_DOC_LIMIT_BYTES) {
+      setTimeout(function() { showToast('⚠ Invoices document is large (' + Math.round(invoicesJsonStr.length/1024) + ' KB). Consider archiving older records.', true); }, 1500);
+    }
+    if (financeJsonStr.length > _SINGLE_DOC_LIMIT_BYTES) {
+      setTimeout(function() { showToast('⚠ Finance document is large (' + Math.round(financeJsonStr.length/1024) + ' KB). Consider archiving older records.', true); }, 1500);
     }
 
-    // 6. Update storage meter
-    window._lastPayloadBytes = mainJsonStr.length + activeJsonStr.length;
+    // 6. Update storage meter (combined across all three active docs)
+    window._lastPayloadBytes = mainJsonStr.length + invoicesJsonStr.length + financeJsonStr.length;
     try {
       var _kb = function(arr) { return Math.round(JSON.stringify(arr || []).length / 1024); };
       window._lastPayloadBreakdown = {
-        invoices:   _kb(partition.active.invoices),
-        finance:    _kb(partition.active.finance),
-        deliveries: _kb(partition.active.deliveries),
+        invoices:   _kb(slimInvoices),
+        finance:    _kb(financeObj.finance),
+        deliveries: _kb(slimDeliveries),
         logs:       _kb(saveObj.activityLog) + _kb(saveObj.adminActivityLog),
         recycle:    _kb(saveObj.recycleBin),
         other:      Math.max(0, Math.round(mainJsonStr.length / 1024) -
@@ -9646,15 +9744,16 @@ async function _doCloudSave() {
       if (ind && ind.textContent === '⏳ Saving…') { ind.textContent = '⏳ Slow connection…'; ind.style.color = 'var(--accent)'; }
     }, 15000);
 
-    // 7. Write both docs in parallel
+    // 7. Write all three docs in parallel
     window._fbSavePending = true;
     let ok = false;
     try {
       var results = await Promise.all([
         window._fbSetData(mainJsonStr),
-        window._fbSetActiveRecords(activeJsonStr)
+        window._fbSetInvoicesDoc(invoicesJsonStr),
+        window._fbSetFinanceDoc(financeJsonStr)
       ]);
-      ok = results[0] && results[1];
+      ok = results[0] && results[1] && results[2];
     } catch (caughtErr) {
       ok = false;
     } finally {
