@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Washn' Fold — Management System V16</title>
+<title>Washn' Fold — Management System V17</title>
 
 <!-- Fonts: try Google Fonts first, fall back to system fonts gracefully on blocked networks -->
 <!-- Fonts loaded non-blocking — page renders instantly even if fonts.googleapis.com
@@ -96,6 +96,28 @@ window._jsPDFLoaded = false;
      Falls back to localStorage automatically. No type=module anywhere.
      ═══════════════════════════════════════════════════════════════════ -->
 <script>
+// ── In-app error console (superuser debug tool) ───────────────────────────
+window._appErrorLog = [];
+window._logAppError = function(type, message, detail) {
+  window._appErrorLog.unshift({
+    ts: new Date().toISOString(),
+    type: type, // 'js-error' | 'promise' | 'save-fail' | 'firebase' | 'warning'
+    message: String(message || '').slice(0, 500),
+    detail:  String(detail  || '').slice(0, 800)
+  });
+  if (window._appErrorLog.length > 150) window._appErrorLog.length = 150;
+};
+window.addEventListener('error', function(e) {
+  var loc = (e.filename ? e.filename.split('/').pop() : '') + (e.lineno ? ':' + e.lineno : '');
+  var stack = e.error && e.error.stack ? '\n' + String(e.error.stack).slice(0, 500) : '';
+  window._logAppError('js-error', e.message, loc + stack);
+});
+window.addEventListener('unhandledrejection', function(e) {
+  var msg = e.reason && e.reason.message ? e.reason.message : String(e.reason || '');
+  var stack = e.reason && e.reason.stack ? '\n' + String(e.reason.stack).slice(0, 500) : '';
+  window._logAppError('promise', 'Unhandled rejection: ' + msg, stack);
+});
+
 // ── Step 1: Offline-first stubs (always active, upgraded by _initFirebase) ───
 window._firebaseReady    = false;
 window._firebaseBlocked  = false;
@@ -118,6 +140,13 @@ window._fbStopPresenceHeartbeat  = async function(){};
 window._fbCleanStaleSessions     = async function(){};
 window._fbListenPresence         = function(){ return null; };
 window._fbListenData             = function(){ return null; };
+// v17: multi-document stubs (upgraded by _initFirebase when Firebase loads)
+window._fbSetActiveRecords    = async function() { return false; };
+window._fbGetActiveRecords    = async function() { return null; };
+window._fbSetArchive          = async function() { return false; };
+window._fbGetArchive          = async function() { return null; };
+window._fbListArchives        = async function() { return []; };
+window._fbListenActiveRecords = function() { return null; };
 
 // ── Step 2: Real Firebase init using Compat SDK (called after scripts load) ──
 window._initFirebase = function() {
@@ -152,6 +181,67 @@ window._initFirebase = function() {
         });
         return true;
       } catch(e) { window._fbLastSaveError = e; return false; }
+    };
+
+    // ── v17: write active records (invoices/finance/deliveries ≤ 90 days) ─────
+    window._fbSetActiveRecords = async function(jsonStr) {
+      try {
+        await db.collection('washnfold').doc('records_active').set({
+          payload: jsonStr, updatedAt: new Date().toISOString()
+        });
+        return true;
+      } catch(e) { return false; }
+    };
+
+    // ── v17: read active records ──────────────────────────────────────────────
+    window._fbGetActiveRecords = async function() {
+      try {
+        var snap = await db.collection('washnfold').doc('records_active').get();
+        return snap.exists ? (snap.data().payload || null) : null;
+      } catch(e) { return null; }
+    };
+
+    // ── v17: write one monthly archive doc (called once when records age out) ──
+    window._fbSetArchive = async function(monthKey, jsonStr) {
+      try {
+        await db.collection('washnfold').doc('records_' + monthKey).set({
+          payload: jsonStr, updatedAt: new Date().toISOString()
+        });
+        return true;
+      } catch(e) { return false; }
+    };
+
+    // ── v17: read one monthly archive doc ────────────────────────────────────
+    window._fbGetArchive = async function(monthKey) {
+      try {
+        var snap = await db.collection('washnfold').doc('records_' + monthKey).get();
+        return snap.exists ? (snap.data().payload || null) : null;
+      } catch(e) { return null; }
+    };
+
+    // ── v17: list all archive document IDs ───────────────────────────────────
+    window._fbListArchives = async function() {
+      try {
+        var snap = await db.collection('washnfold').get();
+        var keys = [];
+        snap.forEach(function(d) {
+          if (d.id.startsWith('records_') && d.id !== 'records_active')
+            keys.push(d.id.replace('records_', ''));
+        });
+        return keys.sort().reverse();
+      } catch(e) { return []; }
+    };
+
+    // ── v17: listen to active records changes ────────────────────────────────
+    window._fbListenActiveRecords = function(cb) {
+      try {
+        return db.collection('washnfold').doc('records_active').onSnapshot(function(snap) {
+          if (snap.exists) {
+            var d = snap.data();
+            if (cb && d.payload) cb(d.payload, d.updatedAt);
+          }
+        });
+      } catch(e) { return null; }
     };
 
     window._fbRegisterPresence = async function(u, t) {
@@ -606,7 +696,7 @@ body.mobile-view .card-title-row { flex-direction: column; align-items: flex-sta
   <div class="login-box">
     <div style="font-family:'DM Mono',monospace;font-size:0.7rem;letter-spacing:0.3em;color:var(--accent);margin-bottom:0.5rem;">✦ WASHN' FOLD</div>
     <h1>Management</h1>
-    <p class="sub">Laundry Service Software v16.0</p>
+    <p class="sub">Laundry Service Software v17.0</p>
     <div id="login-form">
       <div class="form-group" style="margin-bottom:1rem;text-align:left;">
         <label>Username</label>
@@ -705,6 +795,7 @@ body.mobile-view .card-title-row { flex-direction: column; align-items: flex-sta
     <button class="nav-btn" onclick="showPage('planner')" data-page="planner" data-perm="planner"><span class="icon">📅</span>Planner</button>
     <button class="nav-btn" onclick="showPage('expenses')" data-page="expenses" data-perm="expenses"><span class="icon">💸</span>Expenses</button>
     <button class="nav-btn" onclick="showPage('reports')" data-page="reports" data-perm="reports"><span class="icon">📄</span>Reports</button>
+    <button class="nav-btn" onclick="showPage('archives')" data-page="archives" data-perm="invoices"><span class="icon">🗄️</span>Archives</button>
     <button class="nav-btn" onclick="showPage('settings')" data-page="settings" data-perm="settings"><span class="icon">⚙️</span>Settings</button>
     <button class="nav-btn" onclick="showPage('recycle')" data-page="recycle" id="nav-recycle"><span class="icon">🗑️</span>Bin <span id="bin-nav-count" style="background:rgba(255,107,107,0.25);color:var(--danger);border-radius:10px;padding:0.05rem 0.35rem;font-size:0.65rem;font-family:'DM Mono',monospace;"></span></button>
     <button class="nav-btn" onclick="showPage('downloads')" data-page="downloads" id="nav-downloads" style="display:none;"><span class="icon">📂</span>Downloads</button>
@@ -716,6 +807,7 @@ body.mobile-view .card-title-row { flex-direction: column; align-items: flex-sta
     <div class="section-title">Business <span>Overview</span></div>
     <div id="overview-alerts"></div>
     <div class="grid-4" id="stat-grid" style="margin-bottom:1.2rem;"></div>
+    <div id="overview-storage-strip" style="margin-bottom:1.2rem;display:none;"></div>
     <div class="grid-2">
       <div class="card">
         <div class="card-title">▸ Monthly Revenue Trend</div>
@@ -1689,6 +1781,22 @@ body.mobile-view .card-title-row { flex-direction: column; align-items: flex-sta
   </div>
 
   <!-- ══ SETTINGS PAGE ══ -->
+  <!-- ══ ARCHIVES PAGE ══ -->
+  <div class="page" id="page-archives">
+    <div class="section-title">Record <span>Archives</span></div>
+    <div class="card">
+      <div class="card-title">▸ Monthly Archive Viewer</div>
+      <p style="font-size:0.84rem;color:var(--muted);margin-bottom:1rem;line-height:1.6;">
+        Invoices, finance records, and deliveries older than 90 days are stored here permanently.
+        They are safe and complete — select a month below to view or export them.
+      </p>
+      <div id="archive-month-list" style="display:flex;flex-wrap:wrap;gap:0.6rem;margin-bottom:1.2rem;">
+        <span style="color:var(--muted);font-size:0.83rem;">Loading available archives...</span>
+      </div>
+      <div id="archive-viewer-content"></div>
+    </div>
+  </div>
+
   <div class="page" id="page-settings">
     <div class="section-title">App <span>Settings</span></div>
     <div class="grid-2">
@@ -1864,6 +1972,9 @@ body.mobile-view .card-title-row { flex-direction: column; align-items: flex-sta
         </div>
       </div>
       <div class="btn-row">
+        <button class="btn btn-primary" onclick="saveData(true).then(s => { if(s) showToast('✓ Saved to cloud successfully!'); else showToast('⚠ Cloud save failed — check your internet connection.', true); })">☁ Save to Cloud Now</button>
+      </div>
+      <div class="btn-row" style="margin-top:0.5rem;">
         <button class="btn btn-secondary" onclick="exportDataBackup()">💾 Export Backup (Download)</button>
         <button class="btn btn-secondary" onclick="document.getElementById('data-upload').click()">📥 Import Backup</button>
         <input type="file" id="data-upload" accept=".json" style="display:none;" onchange="loadDataFile(this)">
@@ -2039,6 +2150,20 @@ body.mobile-view .card-title-row { flex-direction: column; align-items: flex-sta
     <div id="su-audit-log-list" style="max-height:500px;overflow-y:auto;"></div>
   </div>
 
+
+  <!-- ══ DEBUG CONSOLE ══ -->
+  <div class="card" style="border-color:rgba(116,185,255,0.3);background:rgba(116,185,255,0.04);">
+    <div class="card-title-row">
+      <div class="card-title" style="color:var(--info);">▸ 🐛 App Debug Console</div>
+      <div style="display:flex;gap:0.5rem;flex-wrap:wrap;">
+        <button class="btn btn-sm btn-secondary" onclick="renderDebugConsole()">↻ Refresh</button>
+        <button class="btn btn-sm btn-secondary" onclick="_copyDebugLog()">📋 Copy Full Log</button>
+        <button class="btn btn-sm" style="background:rgba(255,107,107,0.12);border:1px solid rgba(255,107,107,0.3);color:var(--danger);" onclick="window._appErrorLog=[];renderDebugConsole();showToast('Debug log cleared.')">🗑 Clear</button>
+      </div>
+    </div>
+    <p style="font-size:0.79rem;color:var(--muted);margin-bottom:0.9rem;line-height:1.6;">Captures JavaScript errors, unhandled promise rejections, and failed cloud saves in real time. Use "Copy Full Log" to share with the developer.</p>
+    <div id="su-debug-console" style="font-family:'DM Mono',monospace;font-size:0.77rem;"></div>
+  </div>
 
   <!-- ══ SEED DATA TOOL ══ -->
   <div class="card" style="border-color:rgba(232,197,71,0.4);background:rgba(232,197,71,0.04);">
@@ -2730,20 +2855,15 @@ async function loadCloudDataAndProceed() {
   const msgEl = document.getElementById('cloud-load-msg');
   if (msgEl) msgEl.textContent = 'Connecting to cloud...';
 
-  // Wait for Firebase scripts to fully load — no hard cap.
-  // The onerror handlers on the script tags call goOffline() immediately if scripts
-  // can't be fetched, so _firebaseReady will always become true eventually.
-  // A 60-second safety valve covers any unexpected hang.
+  // Wait for Firebase scripts to fully load
   let waited = 0;
   while (!window._firebaseReady && waited < 60000) {
-    if (waited > 0 && waited % 5000 === 0 && msgEl) {
+    if (waited > 0 && waited % 5000 === 0 && msgEl)
       msgEl.textContent = 'Still connecting… (' + Math.round(waited / 1000) + 's)';
-    }
     await new Promise(r => setTimeout(r, 200));
     waited += 200;
   }
   if (!window._firebaseReady) {
-    // 60-second hard timeout — should never happen in normal usage
     window._firebaseBlocked = true;
     window._firebaseReady   = true;
   }
@@ -2752,35 +2872,35 @@ async function loadCloudDataAndProceed() {
     if (msgEl) msgEl.textContent = '📵 Cannot reach cloud — please check your connection.';
   }
 
-  let rawData = null;
+  let rawMain   = null;
+  let rawActive = null;
 
-  // Fetch from Firebase with a 40-second timeout (slow networks need time)
   if (!window._firebaseBlocked && window._fbGetData) {
     if (msgEl) msgEl.textContent = 'Loading your data from cloud...';
     try {
       const _fetchTimeout = new Promise(function(_, rej) { setTimeout(function() { rej(new Error('timeout')); }, 40000); });
-      rawData = await Promise.race([window._fbGetData(), _fetchTimeout]);
-    } catch(e) { rawData = null; }
+      // Load appdata and records_active in parallel
+      const results = await Promise.race([
+        Promise.all([ window._fbGetData(), window._fbGetActiveRecords() ]),
+        _fetchTimeout
+      ]);
+      rawMain   = results[0];
+      rawActive = results[1];
+    } catch(e) { rawMain = null; rawActive = null; }
   }
 
-  if (rawData) {
+  // Load main appdata (settings, credentials, logs, etc.)
+  if (rawMain) {
     try {
-      const loaded = JSON.parse(rawData);
-      // Record the _savedAt so the onSnapshot guard can reject snapshots older than login
-      window._loginDataSavedAt = loaded._savedAt || null;
+      const loadedMain = JSON.parse(rawMain);
+      window._loginDataSavedAt = loadedMain._savedAt || null;
       if (window._loginImportDone) {
-        // User already imported a backup at the login prompt — only inject new records from cloud
-        const _SAFE_KEYS = ['invoices','finance','deliveries','materials','expenses','reminders'];
-        _SAFE_KEYS.forEach(function(key) {
-          if (!Array.isArray(loaded[key]) || !Array.isArray(DB[key])) return;
-          const _have = new Set(DB[key].map(function(r) { return r && r.id; }).filter(Boolean));
-          const _new  = loaded[key].filter(function(r) { return r && r.id && !_have.has(r.id); });
-          if (_new.length > 0) DB[key] = DB[key].concat(_new.map(migrateRecord).filter(Boolean));
-        });
+        // User already imported a backup — only adopt settings from cloud
+        if (loadedMain.settings) Object.assign(DB.settings, loadedMain.settings);
       } else {
-        mergeLoadedData(loaded);
+        mergeLoadedData(loadedMain);
       }
-      // Backfill expiresAtMs on any legacy bin items
+      // Backfill expiresAtMs on legacy bin items
       if (Array.isArray(DB.recycleBin)) {
         DB.recycleBin.forEach(function(b) {
           if (!b) return;
@@ -2790,7 +2910,7 @@ async function loadCloudDataAndProceed() {
           }
         });
       }
-      if (msgEl) msgEl.textContent = '✓ All data loaded from cloud';
+      if (msgEl) msgEl.textContent = '✓ Settings loaded';
     } catch(e) {
       if (msgEl) msgEl.textContent = 'Error reading cloud data — please retry.';
     }
@@ -2798,23 +2918,58 @@ async function loadCloudDataAndProceed() {
     if (msgEl) msgEl.textContent = 'No previous session found — starting fresh.';
   }
 
+  // Load active records (invoices/finance/deliveries ≤ 90 days)
+  if (rawActive) {
+    try {
+      const loadedActive = JSON.parse(rawActive);
+      if (!window._loginImportDone) {
+        ['invoices', 'finance', 'deliveries'].forEach(function(key) {
+          if (!Array.isArray(loadedActive[key])) return;
+          DB[key] = loadedActive[key].map(migrateRecord).filter(Boolean);
+        });
+      } else {
+        // Import already done — union merge only
+        ['invoices', 'finance', 'deliveries'].forEach(function(key) {
+          if (!Array.isArray(loadedActive[key])) return;
+          const incoming = loadedActive[key].map(migrateRecord).filter(Boolean);
+          if (!Array.isArray(DB[key]) || DB[key].length === 0) { DB[key] = incoming; return; }
+          const _have = new Set(DB[key].map(r => r && r.id).filter(Boolean));
+          const _new  = incoming.filter(r => r && r.id && !_have.has(r.id));
+          if (_new.length > 0) DB[key] = DB[key].concat(_new.map(migrateRecord).filter(Boolean));
+        });
+      }
+      if (msgEl) msgEl.textContent = '✓ All data loaded from cloud';
+    } catch(e) { /* non-fatal — active records may not exist yet on first run */ }
+  }
+
+  // Migration: if appdata had invoices (old single-doc format), save in new split format
+  if (rawMain && !rawActive) {
+    try {
+      const _old = JSON.parse(rawMain);
+      if (Array.isArray(_old.invoices) && _old.invoices.length > 0) {
+        window._needsMigrationSave = true;
+        if (msgEl) msgEl.textContent = '✓ Data loaded — migrating to new storage format...';
+      }
+    } catch(e) {}
+  }
+
   setTimeout(() => {
     if (window._loginImportDone) {
-      // Login-time import already ran — app is live. Just make sure data is persisted.
       if (window._appDataReady) saveData(true);
       return;
     }
     document.getElementById('login-import-prompt').style.display = 'none';
     document.getElementById('login-form').style.display = 'block';
     window._appDataReady = true;
-    if (rawData) {
-      // Advance _loginDataSavedAt past the loaded document's timestamps so the
-      // first onSnapshot (which fires with the same just-loaded document) is
-      // rejected by the guard — no need to write back what we just read.
+    if (rawMain) {
       window._loginDataSavedAt = new Date().toISOString();
     }
-    // Never write back at login — Firebase already has the authoritative data.
-    // Writing back would risk overwriting newer cloud data on a slow/cached load.
+    if (window._needsMigrationSave) {
+      window._needsMigrationSave = false;
+      saveData(true).then(function(ok) {
+        if (ok) showToast('✓ Storage restructured — saves will no longer hit the 1 MB limit!', false);
+      });
+    }
     launchApp();
   }, 900);
 }
@@ -3052,71 +3207,69 @@ function _performLogout(isAuto) {
     }
   } catch(_e) {}
 
-  // ── Firebase save with retry (up to 3 attempts, 12 s hard timeout) ──
-  showToast('Logging out ✓');
+  // Build appdata payload (no invoices/finance/deliveries — those go to records_active)
   const saveObj = {
-    ...DB,
-    _appVersion: '16.0',
+    _appVersion: '17.0',
     _savedAt: new Date().toISOString(),
-    deletedSeedIds: DB.deletedSeedIds || [],
-    settings: { ...DB.settings },
-    recycleBin: DB.recycleBin || []
+    _schema: 'v17_split',
+    credentials:          DB.credentials,
+    superUserCredentials: DB.superUserCredentials,
+    adminCredentials:     DB.adminCredentials,
+    adminAccounts:        DB.adminAccounts || [],
+    adminPermissions:     DB.adminPermissions,
+    settings:             Object.assign({}, DB.settings),
+    prices:               DB.prices,
+    customerHistory:      DB.customerHistory || {},
+    materials:            DB.materials || [],
+    reminders:            DB.reminders || [],
+    expenses:             DB.expenses || [],
+    notifications:        (DB.notifications    || []).slice(0, 20),
+    deptHistory:          DB.deptHistory        || [],
+    deletedSeedIds:       DB.deletedSeedIds     || [],
+    recycleBin:           (DB.recycleBin        || []).slice(0, 30),
+    activityLog:          (DB.activityLog       || []).slice(0, 200),
+    adminActivityLog:     (DB.adminActivityLog  || []).slice(0, 100),
+    appDownloads:         (DB.appDownloads || []).map(function(dl) {
+      const out = Object.assign({}, dl); delete out.json; return out;
+    })
   };
-  // Apply same payload trimming as _doCloudSave
-  if (Array.isArray(saveObj.invoices)) {
-    saveObj.invoices = saveObj.invoices.map(function(inv) {
-      const out = Object.assign({}, inv); delete out.invoiceText; return out;
-    });
-  }
-  if (Array.isArray(saveObj.finance) && window._seedDefaultsMap) {
-    saveObj.finance = saveObj.finance.filter(function(r) {
-      if (!r.id || !r.id.startsWith('fin_seed_')) return true;
-      const def = window._seedDefaultsMap[r.id];
-      if (!def) return true;
-      return (r.paidAmount !== def.paidAmount || r.status !== def.status ||
-              r.amount !== def.amount || r.paymentMethod !== def.paymentMethod);
-    });
-  }
-  if (Array.isArray(saveObj.activityLog) && saveObj.activityLog.length > 200) {
-    saveObj.activityLog = saveObj.activityLog.slice(0, 200);
-  }
-  if (Array.isArray(saveObj.appDownloads)) {
-    saveObj.appDownloads = saveObj.appDownloads.map(function(dl) {
-      const out = Object.assign({}, dl);
-      delete out.json;
-      return out;
-    });
-  }
-  if (Array.isArray(saveObj.adminActivityLog) && saveObj.adminActivityLog.length > 100) {
-    saveObj.adminActivityLog = saveObj.adminActivityLog.slice(0, 100);
-  }
-  if (Array.isArray(saveObj.recycleBin) && saveObj.recycleBin.length > 20) {
-    saveObj.recycleBin = saveObj.recycleBin.slice(0, 20);
-  }
-  if (Array.isArray(saveObj.notifications) && saveObj.notifications.length > 20) {
-    saveObj.notifications = saveObj.notifications.slice(0, 20);
-  }
-  let jsonStr = JSON.stringify(saveObj);
-  if (jsonStr.length > 950000) {
-    if (Array.isArray(saveObj.activityLog)) saveObj.activityLog = saveObj.activityLog.slice(0, 50);
-    if (Array.isArray(saveObj.adminActivityLog)) saveObj.adminActivityLog = saveObj.adminActivityLog.slice(0, 30);
-    if (Array.isArray(saveObj.recycleBin)) saveObj.recycleBin = saveObj.recycleBin.slice(0, 5);
-    if (Array.isArray(saveObj.notifications)) saveObj.notifications = saveObj.notifications.slice(0, 5);
-    jsonStr = JSON.stringify(saveObj);
-  }
+
+  // Build active records payload and write archive months
+  const _logoutPartition = _partitionRecords(DB.invoices, DB.finance, DB.deliveries);
+  Object.keys(_logoutPartition.archive).forEach(function(mk) {
+    if (!window._archivedMonths.has(mk)) {
+      const archObj = {
+        _type: 'archive', _monthKey: mk, _savedAt: new Date().toISOString(),
+        invoices: _logoutPartition.archive[mk].invoices,
+        finance:  _logoutPartition.archive[mk].finance,
+        deliveries: _logoutPartition.archive[mk].deliveries
+      };
+      window._fbSetArchive(mk, JSON.stringify(archObj))
+        .then(function(ok) { if (ok) window._archivedMonths.add(mk); });
+    }
+  });
+  const activeObj = {
+    _type: 'active_records', _savedAt: new Date().toISOString(),
+    invoices:   _logoutPartition.active.invoices,
+    finance:    _logoutPartition.active.finance,
+    deliveries: _logoutPartition.active.deliveries
+  };
+  const mainJsonStr   = JSON.stringify(saveObj);
+  const activeJsonStr = JSON.stringify(activeObj);
+  showToast('Logging out ✓');
   if (window._fbSetData) {
     try {
-      // Always attempt to save — retry twice with back-off so a transient glitch doesn't lose data
-      const _attempt = function(delay) {
-        return new Promise(function(r) { setTimeout(r, delay); })
-          .then(function() { return window._fbSetData(jsonStr); });
-      };
-      const _saveDone = window._fbSetData(jsonStr)
-        .then(function(ok) { if (!ok) return _attempt(1500); }) // false return = silent fail, retry
-        .catch(function() { return _attempt(1500); })           // threw = network error, retry
-        .then(function(ok) { if (ok === false) return _attempt(3000); }) // second attempt failed
-        .catch(function() { return _attempt(3000); })           // second threw, retry once more
-        .catch(function() {});                         // all three failed — proceed anyway
+      const _saveDone = Promise.all([
+        window._fbSetData(mainJsonStr),
+        window._fbSetActiveRecords(activeJsonStr)
+      ])
+      .catch(function() {
+        return Promise.all([
+          new Promise(function(r) { setTimeout(r, 1500); }).then(function() { return window._fbSetData(mainJsonStr); }),
+          new Promise(function(r) { setTimeout(r, 1500); }).then(function() { return window._fbSetActiveRecords(activeJsonStr); })
+        ]);
+      })
+      .catch(function() {});
       const _saveTimeout = new Promise(function(r) { setTimeout(r, 12000); });
       Promise.race([_saveDone, _saveTimeout]).then(doLogout);
     } catch(_e) { setTimeout(doLogout, 400); }
@@ -3254,7 +3407,7 @@ function initEmailJS() {
 function buildFullBackupBlob() {
   const saveObj = {
     ...DB,
-    _appVersion: '16.0',
+    _appVersion: '17.0',
     _savedAt: new Date().toISOString(),
     _type: 'full_backup'
   };
@@ -3737,129 +3890,116 @@ function initApp() {
   // ── Periodic auto-save has been disabled in favor of explicit action-based saving.
   if (window._periodicSaveTimer) { clearInterval(window._periodicSaveTimer); window._periodicSaveTimer = null; }
 
-  // ── Listen for remote data changes (another user saved something) ──
+  // ── Listen for remote data changes (another device saved something) ──────────
   if (window._fbListenData) {
     if (_dataUnsubscribe) _dataUnsubscribe();
-    _dataUnsubscribe = window._fbListenData(function(payload, updatedAt) {
-      // Ignore if this is our own save (within last 3 seconds)
+    if (window._activeRecordsUnsubscribe) window._activeRecordsUnsubscribe();
+
+    function _handleRemoteSnapshot(payload, updatedAt, sourceIsActive) {
       if (_lastRemoteUpdate && updatedAt <= _lastRemoteUpdate) return;
       _lastRemoteUpdate = updatedAt;
-      // Only reload if this update is significantly newer than our last save
-      // (gives a 4-second grace window to avoid re-loading our own writes)
       const updateAge = Date.now() - new Date(updatedAt).getTime();
-      if (updateAge < 4000) return; // too fresh — probably our own write
-      // Skip if this snapshot is older than the data we loaded at login.
-      // Prevents the first onSnapshot (which may be the logout-save from the previous
-      // session) from overwriting the fresher state loaded during this login.
+      if (updateAge < 4000) return;
       if (window._loginDataSavedAt && updatedAt && updatedAt < window._loginDataSavedAt) return;
       try {
         const loaded = JSON.parse(payload);
-        // Preserve everything that must NOT be overwritten by a remote sync:
-        // 1. Credentials (session-local, already authenticated)
-        // 2. deletedSeedIds (local deletions must survive remote syncs)
-        // 3. settings that are device-specific (lastDailyLogDate etc.)
-        // 4. appDownloads (in-app folder is device-local)
-        const savedCreds = {
-          credentials:          DB.credentials,
-          superUserCredentials: DB.superUserCredentials,
-          adminCredentials:     DB.adminCredentials,
-          adminAccounts:        DB.adminAccounts
-        };
-        const savedDeletedSeeds = [...(DB.deletedSeedIds || [])];
-        const savedAppDownloads = DB.appDownloads ? [...DB.appDownloads] : [];
-        // Save current recycleBin BEFORE mergeLoadedData overwrites it
-        // mergeLoadedData now does a proper union merge, but we keep this snapshot
-        // as a safety net in case the merge produces an empty result
-        const savedRecycleBin = DB.recycleBin ? [...DB.recycleBin] : [];
-        const savedSettings_local = {
-          lastDailyLogDate:          DB.settings.lastDailyLogDate,
-          lastLogSentAt:             DB.settings.lastLogSentAt,
-          localDownloadIntervalHours: DB.settings.localDownloadIntervalHours,
-          inAppDownloadIntervalHours: DB.settings.inAppDownloadIntervalHours,
-          autoDownloadAccounts:       DB.settings.autoDownloadAccounts,
-          autoDownloadLocalAccounts:  DB.settings.autoDownloadLocalAccounts,
-          binAccessList:              DB.settings.binAccessList,
-          binManagerBlocked:          DB.settings.binManagerBlocked,
-          downloadsAccessList:        DB.settings.downloadsAccessList,
-        };
+        if (sourceIsActive) {
+          // Active records snapshot — only merge invoices/finance/deliveries
+          const savedCreds2 = {
+            credentials: DB.credentials, superUserCredentials: DB.superUserCredentials,
+            adminCredentials: DB.adminCredentials, adminAccounts: DB.adminAccounts
+          };
+          const _snapshotMs2 = updatedAt ? new Date(updatedAt).getTime() : 0;
+          function _idMs2(id) { const m = id && id.match(/(\d{13})/); return m ? parseInt(m[1]) : 0; }
+          const _loadedInvIds2 = new Set((loaded.invoices   || []).map(r => r.id));
+          const _loadedFinIds2 = new Set((loaded.finance    || []).map(r => r.id));
+          const _loadedDelIds2 = new Set((loaded.deliveries || []).map(r => r.id));
+          const _localNewInv2  = DB.invoices.filter(r   => _idMs2(r.id) > _snapshotMs2 && !_loadedInvIds2.has(r.id));
+          const _localNewFin2  = DB.finance.filter(r    => _idMs2(r.id) > _snapshotMs2 && !_loadedFinIds2.has(r.id));
+          const _localNewDel2  = DB.deliveries.filter(r => _idMs2(r.id) > _snapshotMs2 && !_loadedDelIds2.has(r.id));
 
-        // Protect locally-created records that postdate this snapshot.
-        // Record IDs embed a Date.now() timestamp (e.g. inv_1745123456789).
-        // Any record newer than updatedAt that is absent from the incoming snapshot
-        // was created locally after this snapshot was saved — we must re-inject it
-        // after mergeLoadedData (which would otherwise replace the arrays wholesale).
-        const _snapshotMs = updatedAt ? new Date(updatedAt).getTime() : 0;
-        function _idMs(id) { const m = id && id.match(/(\d{13})/); return m ? parseInt(m[1]) : 0; }
-        const _loadedInvIds = new Set((loaded.invoices   || []).map(r => r.id));
-        const _loadedFinIds = new Set((loaded.finance    || []).map(r => r.id));
-        const _loadedDelIds = new Set((loaded.deliveries || []).map(r => r.id));
-        const _loadedMatIds = new Set((loaded.materials  || []).map(r => r.id));
-        const _loadedRemIds = new Set((loaded.reminders  || []).map(r => r.id));
-        const _loadedExpIds = new Set((loaded.expenses   || []).map(r => r.id));
-        const _localNewInvoices   = DB.invoices.filter(r => _idMs(r.id) > _snapshotMs && !_loadedInvIds.has(r.id));
-        const _localNewFinance    = DB.finance.filter(r => _idMs(r.id) > _snapshotMs && !_loadedFinIds.has(r.id));
-        const _localNewDeliveries = DB.deliveries.filter(r => _idMs(r.id) > _snapshotMs && !_loadedDelIds.has(r.id));
-        const _localNewMaterials  = DB.materials.filter(r => _idMs(r.id) > _snapshotMs && !_loadedMatIds.has(r.id));
-        const _localNewReminders  = DB.reminders.filter(r => _idMs(r.id) > _snapshotMs && !_loadedRemIds.has(r.id));
-        const _localNewExpenses   = DB.expenses.filter(r => _idMs(r.id) > _snapshotMs && !_loadedExpIds.has(r.id));
+          DB.invoices   = (loaded.invoices   || []).map(migrateRecord).filter(Boolean);
+          DB.finance    = (loaded.finance    || []).map(migrateRecord).filter(Boolean);
+          DB.deliveries = (loaded.deliveries || []).map(migrateRecord).filter(Boolean);
 
-        mergeLoadedData(loaded, { unionMerge: true });
+          let _hadNew2 = false;
+          if (_localNewInv2.length)  { DB.invoices   = [..._localNewInv2,  ...DB.invoices];   _hadNew2 = true; }
+          if (_localNewFin2.length)  { DB.finance    = [..._localNewFin2,  ...DB.finance];    _hadNew2 = true; }
+          if (_localNewDel2.length)  { DB.deliveries = [..._localNewDel2,  ...DB.deliveries]; _hadNew2 = true; }
 
-        // Restore session-critical data
-        Object.assign(DB, savedCreds);
-        // Union deletedSeedIds: keep all local + incoming deletions
-        if (!DB.deletedSeedIds) DB.deletedSeedIds = [];
-        savedDeletedSeeds.forEach(id => { if (!DB.deletedSeedIds.includes(id)) DB.deletedSeedIds.push(id); });
-        // Re-apply finance filter against the merged deletedSeedIds
-        DB.finance = DB.finance.filter(r => !DB.deletedSeedIds.includes(r.id));
-        // Restore device-local settings (don't let remote reset them)
-        Object.assign(DB.settings, savedSettings_local);
-        // Restore in-app downloads (device-local)
-        if (savedAppDownloads.length > 0) DB.appDownloads = savedAppDownloads;
-        // Safety net: if remote sync produced an empty/smaller bin than what we had locally,
-        // re-merge our saved bin items (mergeLoadedData already does union, but double-check)
-        if (savedRecycleBin.length > (DB.recycleBin || []).length) {
-          const _nowMs2 = Date.now();
-          const _binMap2 = new Map();
-          (DB.recycleBin || []).forEach(b => { if (b && b.id) _binMap2.set(b.id, b); });
-          savedRecycleBin.forEach(b => {
-            if (!b || !b.id) return;
-            const exMs = typeof b.expiresAtMs === 'number' ? b.expiresAtMs : new Date(b.expiresAt || 0).getTime();
-            if (exMs > _nowMs2 || (!b.expiresAt && !b.expiresAtMs)) {
-              if (!_binMap2.has(b.id)) _binMap2.set(b.id, b);
-            }
-          });
-          DB.recycleBin = [..._binMap2.values()].sort((a,b) => (b.deletedAt||'') > (a.deletedAt||'') ? 1 : -1);
+          Object.assign(DB, savedCreds2);
+          _reconcileWithBin();
+          renderAll();
+          if (_hadNew2) saveData(true);
+
+        } else {
+          // Main appdata snapshot — merge settings/logs/etc., preserve records from records_active
+          const savedCreds = {
+            credentials: DB.credentials, superUserCredentials: DB.superUserCredentials,
+            adminCredentials: DB.adminCredentials, adminAccounts: DB.adminAccounts
+          };
+          const savedDeletedSeeds = [...(DB.deletedSeedIds || [])];
+          const savedAppDownloads = DB.appDownloads ? [...DB.appDownloads] : [];
+          const savedRecycleBin   = DB.recycleBin   ? [...DB.recycleBin]   : [];
+          const savedInvoices     = [...DB.invoices];
+          const savedFinance      = [...DB.finance];
+          const savedDeliveries   = [...DB.deliveries];
+          const savedSettings_local = {
+            lastDailyLogDate: DB.settings.lastDailyLogDate, lastLogSentAt: DB.settings.lastLogSentAt,
+            localDownloadIntervalHours: DB.settings.localDownloadIntervalHours,
+            inAppDownloadIntervalHours: DB.settings.inAppDownloadIntervalHours,
+            autoDownloadAccounts: DB.settings.autoDownloadAccounts,
+            autoDownloadLocalAccounts: DB.settings.autoDownloadLocalAccounts,
+            binAccessList: DB.settings.binAccessList, binManagerBlocked: DB.settings.binManagerBlocked,
+            downloadsAccessList: DB.settings.downloadsAccessList,
+          };
+
+          mergeLoadedData(loaded, { unionMerge: true });
+
+          // Restore records — authoritative source is records_active, not appdata
+          DB.invoices   = savedInvoices;
+          DB.finance    = savedFinance;
+          DB.deliveries = savedDeliveries;
+
+          Object.assign(DB, savedCreds);
+          if (!DB.deletedSeedIds) DB.deletedSeedIds = [];
+          savedDeletedSeeds.forEach(id => { if (!DB.deletedSeedIds.includes(id)) DB.deletedSeedIds.push(id); });
+          DB.finance = DB.finance.filter(r => !DB.deletedSeedIds.includes(r.id));
+          Object.assign(DB.settings, savedSettings_local);
+          if (savedAppDownloads.length > 0) DB.appDownloads = savedAppDownloads;
+          if (savedRecycleBin.length > (DB.recycleBin || []).length) {
+            const _nowMs2 = Date.now();
+            const _binMap2 = new Map();
+            (DB.recycleBin || []).forEach(b => { if (b && b.id) _binMap2.set(b.id, b); });
+            savedRecycleBin.forEach(b => {
+              if (!b || !b.id) return;
+              const exMs = typeof b.expiresAtMs === 'number' ? b.expiresAtMs : new Date(b.expiresAt || 0).getTime();
+              if (exMs > _nowMs2 || (!b.expiresAt && !b.expiresAtMs)) {
+                if (!_binMap2.has(b.id)) _binMap2.set(b.id, b);
+              }
+            });
+            DB.recycleBin = [..._binMap2.values()].sort((a,b) => (b.deletedAt||'') > (a.deletedAt||'') ? 1 : -1);
+          }
+          _reconcileWithBin();
+          renderAll();
         }
 
-        // Re-inject locally-created records that the incoming snapshot did not contain.
-        // This prevents a concurrent remote write from silently erasing records that were
-        // added on this device but not yet reflected in Firebase at snapshot time.
-        let _hadLocalNew = false;
-        if (_localNewInvoices.length)   { DB.invoices   = [..._localNewInvoices,   ...DB.invoices];   _hadLocalNew = true; }
-        if (_localNewFinance.length)    { DB.finance    = [..._localNewFinance,    ...DB.finance];     _hadLocalNew = true; }
-        if (_localNewDeliveries.length) { DB.deliveries = [..._localNewDeliveries, ...DB.deliveries]; _hadLocalNew = true; }
-        if (_localNewMaterials.length)  { DB.materials  = [..._localNewMaterials,  ...DB.materials];  _hadLocalNew = true; }
-        if (_localNewReminders.length)  { DB.reminders  = [..._localNewReminders,  ...DB.reminders];  _hadLocalNew = true; }
-        if (_localNewExpenses.length)   { DB.expenses   = [..._localNewExpenses,   ...DB.expenses];   _hadLocalNew = true; }
-
-        // Second reconciliation pass — the safety-net recycleBin re-merge above may
-        // have added more bin items after mergeLoadedData's first pass. Run again so
-        // any records those items correspond to are also removed from active arrays.
-        _reconcileWithBin();
-        renderAll();
-        // If we rescued locally-created records, push the complete state back to Firebase
-        // immediately so those records survive any subsequent remote sync.
-        if (_hadLocalNew) saveData(true);
         const ind = document.getElementById('autosave-indicator');
         if (ind) {
-          ind.style.color = 'var(--info)';
-          ind.textContent = '↻ Synced';
-          ind.style.opacity = '1';
+          ind.style.color = 'var(--info)'; ind.textContent = '↻ Synced'; ind.style.opacity = '1';
           setTimeout(() => { ind.style.opacity = '0'; ind.textContent = '✓ Saved'; ind.style.color = 'var(--success)'; }, 2500);
         }
-      } catch(e) { /* silent */; }
+      } catch(e) {}
+    }
+
+    _dataUnsubscribe = window._fbListenData(function(payload, updatedAt) {
+      _handleRemoteSnapshot(payload, updatedAt, false);
     });
+    window._activeRecordsUnsubscribe = window._fbListenActiveRecords
+      ? window._fbListenActiveRecords(function(payload, updatedAt) {
+          _handleRemoteSnapshot(payload, updatedAt, true);
+        })
+      : null;
   }
 }
 
@@ -4031,6 +4171,7 @@ function showPage(name) {
   if (name === 'recycle') { renderRecycleBin(); _updateBinNavCount(); }
   if (name === 'ai-import') { aiResetImport(); }
   if (name === 'downloads') { renderDownloadsFolder(); renderDelegateList(); }
+  if (name === 'superuser') { renderDebugConsole(); }
 }
 
 // ══════════════════════════════════════════════════════════════════
@@ -4328,6 +4469,7 @@ function updateBagPreview() {
 function generateInvoice() {
   if (!_canEdit('creating invoices')) return;
   if (currentInvoiceItems.length === 0) { showToast('No items!', true); return; }
+  if (window._lastPayloadBytes > 0 && window._lastPayloadBytes >= _STORAGE_LIMIT_BYTES) { _showStorageFullLockout(); return; }
   const _genBtn = document.getElementById('inv-generate-btn');
   if (_genBtn && _genBtn.disabled) return;
   const _parcelingIncluded = document.getElementById('parceling-include')?.checked ?? true;
@@ -5509,6 +5651,7 @@ function _getPayRec() {
 
 function confirmPayment() {
   if (_paymentBusy) return;
+  if (window._lastPayloadBytes > 0 && window._lastPayloadBytes >= _STORAGE_LIMIT_BYTES) { _showStorageFullLockout(); return; }
   const amt = parseInt(document.getElementById('pay-amount').value) || 0;
   const method = document.getElementById('pay-method').value;
   if (amt <= 0) { showToast('Enter an amount greater than 0.', true); return; }
@@ -5528,14 +5671,15 @@ function confirmPayment() {
   showToast(`Payment of ${amt.toLocaleString()} FCFA recorded ✓`);
   addNotification(`${rec.customer} paid ${amt.toLocaleString()} FCFA (${method})`, 'success');
   logActivity('Payment Recorded', `${rec.customer} — ${amt.toLocaleString()} FCFA via ${method}`, 'finance');
+  _paymentBusy = false; // release immediately — modal is closed, double-click is no longer possible
   saveData(true).then(saved => {
-    _paymentBusy = false;
     if (!saved) showToast('⚠ Payment saved locally but cloud sync failed — reopen and re-enter payment if it disappears.', true);
   });
 }
 
 function confirmEditPayment() {
   if (_paymentBusy) return;
+  if (window._lastPayloadBytes > 0 && window._lastPayloadBytes >= _STORAGE_LIMIT_BYTES) { _showStorageFullLockout(); return; }
   const newPaid = Math.max(0, parseInt(document.getElementById('pay-edit-amount').value) || 0);
   const method = document.getElementById('pay-edit-method').value;
   const rec = _getPayRec();
@@ -5554,8 +5698,8 @@ function confirmEditPayment() {
   showToast(`Payment corrected: ${oldPaid.toLocaleString()} → ${rec.paidAmount.toLocaleString()} FCFA ✓`);
   addNotification(`${rec.customer} payment corrected to ${rec.paidAmount.toLocaleString()} FCFA`, 'info');
   logActivity('Payment Corrected', `${rec.customer} — corrected from ${oldPaid.toLocaleString()} to ${rec.paidAmount.toLocaleString()} FCFA`, 'finance');
+  _paymentBusy = false; // release immediately — modal is closed, double-click is no longer possible
   saveData(true).then(saved => {
-    _paymentBusy = false;
     if (!saved) showToast('⚠ Correction saved locally but cloud sync failed — data may not persist.', true);
   });
 }
@@ -6069,7 +6213,7 @@ function _saveLogToDownloadsFolder() {
   const filename = 'WashnFold_Log_' + ts.slice(0,10) + '_' + String(now.getHours()).padStart(2,'0') + 'h' + String(now.getMinutes()).padStart(2,'0') + '.json';
   const logData = {
     _type: 'app_log_backup',
-    _appVersion: '16.0',
+    _appVersion: '17.0',
     _savedAt: ts,
     _savedBy: currentAccountUsername || 'system',
     _savedByType: currentAccountType || 'unknown',
@@ -7131,6 +7275,27 @@ function renderOverview() {
     if (actions.length === 0) actions.push(`✅ <b>All good!</b> Business is running smoothly. Keep up the great work!`);
     propEl.innerHTML = actions.map(a => `<div style="padding:0.5rem 0;border-bottom:1px solid var(--border);font-size:0.85rem;">${a}</div>`).join('');
   }
+
+  // Storage strip
+  const _strip = document.getElementById('overview-storage-strip');
+  if (_strip) {
+    if (!window._lastPayloadBytes) _measureCurrentPayload();
+    const _bytes = window._lastPayloadBytes || 0;
+    if (_bytes > 0) {
+      const _pct   = Math.min(Math.round(_bytes / _STORAGE_LIMIT_BYTES * 100), 100);
+      const _kb    = Math.round(_bytes / 1024);
+      const _color = _pct >= 90 ? 'var(--danger)' : _pct >= 75 ? 'var(--accent)' : _pct >= 60 ? '#f0a500' : 'var(--success)';
+      _strip.style.display = '';
+      _strip.innerHTML = `<div style="background:var(--surface);border-radius:10px;padding:0.7rem 1rem;border:1px solid rgba(255,255,255,0.07);display:flex;align-items:center;gap:1rem;flex-wrap:wrap;">
+        <span style="font-size:0.79rem;color:var(--muted);white-space:nowrap;flex-shrink:0;">☁ Cloud Storage</span>
+        <div style="flex:1;min-width:100px;background:rgba(255,255,255,0.08);border-radius:4px;height:6px;overflow:hidden;">
+          <div style="height:100%;width:${_pct}%;background:${_color};border-radius:4px;transition:width 0.7s,background 0.4s;"></div>
+        </div>
+        <span style="font-size:0.78rem;font-family:'DM Mono',monospace;color:${_color};white-space:nowrap;">${_pct}%&nbsp;&nbsp;${_kb.toLocaleString()} / 1,024 KB</span>
+        <span onclick="showPage('settings')" style="font-size:0.72rem;color:var(--muted);cursor:pointer;white-space:nowrap;text-decoration:underline;text-underline-offset:2px;">Details →</span>
+      </div>`;
+    }
+  }
 }
 
 // ══════════════════════════════════════════════════════════════════
@@ -7777,7 +7942,7 @@ function loadSettingsUI() {
   renderAuditLog();
   const auditCard = document.getElementById('admin-audit-card');
   if (auditCard) auditCard.style.display = currentAccountType === 'admin' ? 'none' : '';
-  _updateStorageMeterUI();
+  _measureCurrentPayload();
 }
 
 function saveWelcomeMessage() {
@@ -8411,6 +8576,80 @@ function saveSuWelcomeMsg() {
   showToast('Welcome message saved ✓');
 }
 
+function renderDebugConsole() {
+  const el = document.getElementById('su-debug-console');
+  if (!el) return;
+
+  const bytes = window._lastPayloadBytes || 0;
+  const pct   = bytes ? Math.min(Math.round(bytes / _STORAGE_LIMIT_BYTES * 100), 100) : null;
+  const fbOk  = !window._firebaseBlocked && !!window._fbSetData;
+  const lastSaved = window._loginDataSavedAt ? new Date(window._loginDataSavedAt).toLocaleString() : '—';
+
+  const statusColor = (v, ok) => ok ? 'var(--success)' : 'var(--danger)';
+
+  let html = `<div style="background:rgba(255,255,255,0.04);border-radius:8px;padding:0.85rem 1rem;margin-bottom:0.9rem;line-height:2;">`;
+  html += `<div style="color:var(--muted);font-size:0.72rem;letter-spacing:0.1em;margin-bottom:0.4rem;">APP STATUS</div>`;
+  html += `<div>App Version: <span style="color:var(--accent2);">v17.0</span></div>`;
+  html += `<div>Firebase: <span style="color:${fbOk ? 'var(--success)' : 'var(--danger)'};">${fbOk ? '✓ Connected' : window._firebaseBlocked ? '✗ Blocked / Offline' : '⏳ Connecting…'}</span></div>`;
+  html += `<div>Cloud Storage: <span style="color:${pct === null ? 'var(--muted)' : pct >= 100 ? 'var(--danger)' : pct >= 85 ? 'var(--accent)' : 'var(--success)'};">${pct === null ? '— (open Settings to measure)' : pct + '% (' + Math.round(bytes / 1024) + ' KB / 1,024 KB)'}</span></div>`;
+  html += `<div>Last cloud save: <span style="color:var(--muted);">${lastSaved}</span></div>`;
+  html += `<div>Session: <span style="color:var(--muted);">${currentAccountUsername || '—'} (${currentAccountType || '—'})</span></div>`;
+  html += `<div>Browser: <span style="color:var(--muted);font-size:0.72rem;">${navigator.userAgent.slice(0, 90)}</span></div>`;
+  html += `<div>DB counts: <span style="color:var(--muted);">invoices:${DB.invoices.length} finance:${DB.finance.length} deliveries:${DB.deliveries.length} expenses:${DB.expenses.length}</span></div>`;
+  html += `</div>`;
+
+  const typeIcon  = { 'js-error': '🔴', 'promise': '🟠', 'save-fail': '🟡', 'firebase': '🔵', 'warning': '⚪' };
+  const typeLabel = { 'js-error': 'JS Error', 'promise': 'Promise', 'save-fail': 'Save Fail', 'firebase': 'Firebase', 'warning': 'Warning' };
+  const typeColor = { 'js-error': 'var(--danger)', 'promise': 'var(--accent3)', 'save-fail': 'var(--accent)', 'firebase': 'var(--info)', 'warning': 'var(--muted)' };
+
+  if (window._appErrorLog.length === 0) {
+    html += `<div style="color:var(--success);padding:0.6rem 0;">✓ No errors captured in this session.</div>`;
+  } else {
+    html += `<div style="color:var(--muted);font-size:0.72rem;letter-spacing:0.1em;margin-bottom:0.5rem;">${window._appErrorLog.length} EVENT(S) — NEWEST FIRST</div>`;
+    window._appErrorLog.forEach(function(e) {
+      const icon  = typeIcon[e.type]  || '⚪';
+      const label = typeLabel[e.type] || e.type;
+      const color = typeColor[e.type] || 'var(--muted)';
+      const ts    = new Date(e.ts).toLocaleTimeString();
+      html += `<div style="background:rgba(255,255,255,0.03);border-left:3px solid ${color};border-radius:0 6px 6px 0;padding:0.5rem 0.75rem;margin-bottom:0.4rem;">`;
+      html += `<div style="display:flex;justify-content:space-between;margin-bottom:0.2rem;"><span style="color:${color};">${icon} ${label}</span><span style="color:var(--muted);font-size:0.7rem;">${ts}</span></div>`;
+      html += `<div style="color:var(--text);word-break:break-all;">${e.message.replace(/</g,'&lt;')}</div>`;
+      if (e.detail) html += `<div style="color:var(--muted);font-size:0.71rem;margin-top:0.2rem;word-break:break-all;white-space:pre-wrap;">${e.detail.replace(/</g,'&lt;')}</div>`;
+      html += `</div>`;
+    });
+  }
+
+  el.innerHTML = html;
+}
+
+function _copyDebugLog() {
+  const bytes = window._lastPayloadBytes || 0;
+  const fbOk  = !window._firebaseBlocked && !!window._fbSetData;
+  let txt = '=== Washn\'Fold Debug Log ===\n';
+  txt += 'Time: ' + new Date().toISOString() + '\n';
+  txt += 'Firebase: ' + (fbOk ? 'Connected' : window._firebaseBlocked ? 'Blocked/Offline' : 'Connecting') + '\n';
+  txt += 'Storage: ' + (bytes ? Math.round(bytes/1024) + ' KB (' + Math.min(Math.round(bytes/_STORAGE_LIMIT_BYTES*100),100) + '%)' : 'not measured') + '\n';
+  txt += 'Account: ' + (currentAccountUsername || '—') + ' (' + (currentAccountType || '—') + ')\n';
+  txt += 'DB: invoices=' + DB.invoices.length + ' finance=' + DB.finance.length + ' deliveries=' + DB.deliveries.length + '\n';
+  txt += 'Browser: ' + navigator.userAgent + '\n\n';
+  txt += '--- Events (' + window._appErrorLog.length + ') ---\n';
+  window._appErrorLog.forEach(function(e) {
+    txt += '[' + e.ts + '] [' + e.type + '] ' + e.message + '\n';
+    if (e.detail) txt += '  ' + e.detail.replace(/\n/g, '\n  ') + '\n';
+  });
+  try {
+    navigator.clipboard.writeText(txt).then(function() { showToast('Debug log copied to clipboard ✓'); }).catch(function() { _fallbackCopyText(txt); });
+  } catch(_) { _fallbackCopyText(txt); }
+}
+
+function _fallbackCopyText(txt) {
+  const ta = document.createElement('textarea');
+  ta.value = txt; ta.style.cssText = 'position:fixed;opacity:0;';
+  document.body.appendChild(ta); ta.select();
+  try { document.execCommand('copy'); showToast('Debug log copied ✓'); } catch(_) { showToast('Copy failed — try a different browser.', true); }
+  document.body.removeChild(ta);
+}
+
 function renderSuAuditLog() {
   const el = document.getElementById('su-audit-log-list');
   if (!el) return;
@@ -8833,7 +9072,7 @@ function logAdminActivity(action, detail) {
 function saveAdminDataPackage() {
   const pkg = {
     _type: 'admin_data_package',
-    _appVersion: '16.0',
+    _appVersion: '17.0',
     _exportedAt: new Date().toISOString(),
     _adminUser: DB.adminCredentials.username,
     // All data arrays — complete snapshot
@@ -9060,7 +9299,7 @@ function _updateStorageMeterUI() {
 
   if (bar) { bar.style.width = pct + '%'; bar.style.background = color; }
   if (lbl) { lbl.textContent = pct + '% used'; lbl.style.color = color; }
-  if (kbt) kbt.textContent = kb.toLocaleString() + ' KB of 1,024 KB used';
+  if (kbt) kbt.textContent = kb.toLocaleString() + ' KB across 2 cloud documents (each limit: 1,024 KB)';
   if (dot) {
     dot.style.display = 'inline-block';
     dot.style.background = color;
@@ -9085,6 +9324,11 @@ function _checkStorageLevel() {
   const pct = Math.min(Math.round(bytes / _STORAGE_LIMIT_BYTES * 100), 100);
   _updateStorageMeterUI();
 
+  if (bytes >= _STORAGE_LIMIT_BYTES) {
+    // Storage genuinely full — lock the app immediately
+    setTimeout(() => _showStorageFullLockout(), 800);
+    return;
+  }
   if (pct >= 95 && _storageWarnedLevel < 95) {
     _storageWarnedLevel = 95;
     setTimeout(() => _showStorageWarningModal(pct, 'critical'), 1200);
@@ -9131,6 +9375,37 @@ function _showStorageWarningModal(pct, level) {
     </div>`;
   document.body.appendChild(overlay);
 }
+function _showStorageFullLockout() {
+  if (document.getElementById('storage-full-lockout')) return; // already showing
+  // Close any lower-priority warning modal so they don't stack
+  const prev = document.getElementById('storage-warning-modal');
+  if (prev) prev.remove();
+
+  const overlay = document.createElement('div');
+  overlay.id = 'storage-full-lockout';
+  overlay.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.94);z-index:999999;display:flex;align-items:center;justify-content:center;padding:1.2rem;';
+  overlay.innerHTML = `
+    <div style="background:var(--surface);border:2px solid rgba(255,107,107,0.65);border-radius:16px;padding:2rem 1.8rem;max-width:480px;width:100%;font-family:'DM Sans',sans-serif;text-align:center;">
+      <div style="font-size:2.2rem;margin-bottom:0.7rem;">🔴</div>
+      <div style="font-size:1.15rem;font-weight:700;color:var(--danger);margin-bottom:0.75rem;">Cloud Storage Full — Saves Blocked</div>
+      <p style="font-size:0.85rem;color:var(--text);line-height:1.7;margin-bottom:0.65rem;">Your cloud storage has reached 100%. <b>New invoices, payments, and changes cannot be saved to the cloud</b> and will be lost if you refresh or close the app.</p>
+      <div style="background:rgba(232,197,71,0.1);border:1px solid rgba(232,197,71,0.35);border-radius:8px;padding:0.8rem;margin-bottom:1rem;text-align:left;">
+        <div style="font-size:0.79rem;color:var(--accent);font-weight:600;margin-bottom:0.4rem;">What to do — in order:</div>
+        <div style="font-size:0.8rem;color:var(--muted);line-height:1.8;">
+          1. <b style="color:var(--text);">Download a backup</b> (button below) — protects all current data<br>
+          2. <b style="color:var(--text);">Delete old paid records</b> in Finance or Recycle Bin to free space<br>
+          3. Cloud saves will resume automatically once payload drops below 1 MB
+        </div>
+      </div>
+      <p style="font-size:0.79rem;color:var(--muted);line-height:1.6;margin-bottom:1.4rem;">Note: downloading a backup does <u>not</u> free cloud storage — it only gives you a safe copy of your data.</p>
+      <div style="display:flex;flex-direction:column;gap:0.75rem;">
+        <button onclick="exportDataBackup()" style="background:rgba(81,207,102,0.2);border:1.5px solid rgba(81,207,102,0.55);color:var(--success);border-radius:10px;padding:0.9rem 1rem;font-family:'DM Mono',monospace;font-size:0.86rem;cursor:pointer;font-weight:700;">💾 Download Full Backup</button>
+        <button onclick="showPage('settings');document.getElementById('storage-full-lockout').style.opacity='0.35';" style="background:rgba(78,205,196,0.08);border:1px solid rgba(78,205,196,0.25);color:var(--accent2);border-radius:8px;padding:0.6rem 1rem;font-family:'DM Mono',monospace;font-size:0.79rem;cursor:pointer;">📊 View Storage Details in Settings</button>
+      </div>
+    </div>`;
+  document.body.appendChild(overlay);
+}
+
 function saveData(immediate) {
   // Guard: never save before real data is loaded
   if (!window._appDataReady) return Promise.resolve(false);
@@ -9148,6 +9423,35 @@ function saveData(immediate) {
   return _doCloudSave();
 }
 
+function _measureCurrentPayload() {
+  if (!window._appDataReady || typeof _partitionRecords !== 'function') return;
+  try {
+    const partition = _partitionRecords(DB.invoices, DB.finance, DB.deliveries);
+    const activeObj = { invoices: partition.active.invoices, finance: partition.active.finance, deliveries: partition.active.deliveries };
+    const mainObj = {
+      settings: DB.settings, prices: DB.prices, customerHistory: DB.customerHistory || {},
+      materials: DB.materials || [], reminders: DB.reminders || [], expenses: DB.expenses || [],
+      notifications: (DB.notifications || []).slice(0, 20), deptHistory: DB.deptHistory || [],
+      deletedSeedIds: DB.deletedSeedIds || [], recycleBin: (DB.recycleBin || []).slice(0, 30),
+      activityLog: (DB.activityLog || []).slice(0, 200), adminActivityLog: (DB.adminActivityLog || []).slice(0, 100),
+      credentials: DB.credentials, adminAccounts: DB.adminAccounts || []
+    };
+    const mainJson   = JSON.stringify(mainObj);
+    const activeJson = JSON.stringify(activeObj);
+    window._lastPayloadBytes = mainJson.length + activeJson.length;
+    const _kb = function(arr) { return Math.round(JSON.stringify(arr || []).length / 1024); };
+    window._lastPayloadBreakdown = {
+      invoices:   _kb(partition.active.invoices),
+      finance:    _kb(partition.active.finance),
+      deliveries: _kb(partition.active.deliveries),
+      logs:       _kb(mainObj.activityLog) + _kb(mainObj.adminActivityLog),
+      recycle:    _kb(mainObj.recycleBin),
+      other:      Math.max(0, Math.round(mainJson.length / 1024) - _kb(mainObj.activityLog) - _kb(mainObj.adminActivityLog) - _kb(mainObj.recycleBin))
+    };
+    _updateStorageMeterUI();
+  } catch(_e) {}
+}
+
 function _getSaveFailReason() {
   if (!navigator.onLine) return 'No internet connection';
   const err = window._fbLastSaveError;
@@ -9163,82 +9467,145 @@ function _getSaveFailReason() {
   return null;
 }
 
+// ── v17: helper — get YYYY_MM string for a record's date ─────────────────────
+function _monthKey(dateStr) {
+  if (!dateStr) return null;
+  var d = new Date(dateStr);
+  if (isNaN(d.getTime())) return null;
+  return d.getFullYear() + '_' + String(d.getMonth() + 1).padStart(2, '0');
+}
+
+// ── v17: split invoices/finance/deliveries into active (≤90d) and archive ────
+function _partitionRecords(invoices, finance, deliveries) {
+  var cutoffMs = Date.now() - (90 * 24 * 60 * 60 * 1000);
+  var active   = { invoices: [], finance: [], deliveries: [] };
+  var archive  = {};
+
+  (invoices || []).forEach(function(inv) {
+    var d = new Date(inv.collectionDate || inv.date || '');
+    if (!isNaN(d.getTime()) && d.getTime() < cutoffMs) {
+      var mk = _monthKey(inv.collectionDate || inv.date);
+      if (mk) {
+        if (!archive[mk]) archive[mk] = { invoices: [], finance: [], deliveries: [] };
+        archive[mk].invoices.push(inv);
+      }
+    } else { active.invoices.push(inv); }
+  });
+
+  (finance || []).forEach(function(rec) {
+    var d = new Date(rec.date || '');
+    if (!isNaN(d.getTime()) && d.getTime() < cutoffMs) {
+      var mk = _monthKey(rec.date);
+      if (mk) {
+        if (!archive[mk]) archive[mk] = { invoices: [], finance: [], deliveries: [] };
+        archive[mk].finance.push(rec);
+      }
+    } else { active.finance.push(rec); }
+  });
+
+  (deliveries || []).forEach(function(del) {
+    var d = new Date(del.collectionDate || '');
+    if (!isNaN(d.getTime()) && d.getTime() < cutoffMs) {
+      var mk = _monthKey(del.collectionDate);
+      if (mk) {
+        if (!archive[mk]) archive[mk] = { invoices: [], finance: [], deliveries: [] };
+        archive[mk].deliveries.push(del);
+      }
+    } else { active.deliveries.push(del); }
+  });
+
+  return { active: active, archive: archive };
+}
+
+// Track which archive months have already been written this session
+window._archivedMonths = window._archivedMonths || new Set();
+
 async function _doCloudSave() {
   try {
     const _nowISO = new Date().toISOString();
     window._loginDataSavedAt = _nowISO;
-    const saveObj = {
-      ...DB,
-      _appVersion: '16.0',
+
+    // 1. Partition records
+    var partition = _partitionRecords(DB.invoices, DB.finance, DB.deliveries);
+
+    // 2. Write new archive months (fire-and-forget, don't block main save)
+    Object.keys(partition.archive).forEach(function(mk) {
+      if (!window._archivedMonths.has(mk)) {
+        var archiveObj = {
+          _type: 'archive', _monthKey: mk, _savedAt: _nowISO,
+          invoices:   partition.archive[mk].invoices,
+          finance:    partition.archive[mk].finance,
+          deliveries: partition.archive[mk].deliveries
+        };
+        window._fbSetArchive(mk, JSON.stringify(archiveObj))
+          .then(function(ok) { if (ok) window._archivedMonths.add(mk); });
+      }
+    });
+
+    // 3. Active records payload
+    var activeObj = {
+      _type: 'active_records', _savedAt: _nowISO,
+      invoices:   partition.active.invoices,
+      finance:    partition.active.finance,
+      deliveries: partition.active.deliveries
+    };
+    var activeJsonStr = JSON.stringify(activeObj);
+
+    // 4. Main appdata payload (no big arrays)
+    var saveObj = {
+      _appVersion: '17.0',
       _savedAt: _nowISO,
-      deletedSeedIds: DB.deletedSeedIds || [],
-      settings: { ...DB.settings },
-      recycleBin: DB.recycleBin || []
+      _schema: 'v17_split',
+      credentials:          DB.credentials,
+      superUserCredentials: DB.superUserCredentials,
+      adminCredentials:     DB.adminCredentials,
+      adminAccounts:        DB.adminAccounts || [],
+      adminPermissions:     DB.adminPermissions,
+      settings:             Object.assign({}, DB.settings),
+      prices:               DB.prices,
+      customerHistory:      DB.customerHistory || {},
+      materials:            DB.materials || [],
+      reminders:            DB.reminders || [],
+      expenses:             DB.expenses || [],
+      notifications:        (DB.notifications    || []).slice(0, 20),
+      deptHistory:          DB.deptHistory        || [],
+      deletedSeedIds:       DB.deletedSeedIds     || [],
+      recycleBin:           (DB.recycleBin        || []).slice(0, 30),
+      activityLog:          (DB.activityLog       || []).slice(0, 200),
+      adminActivityLog:     (DB.adminActivityLog  || []).slice(0, 100),
+      appDownloads:         (DB.appDownloads || []).map(function(dl) {
+        var out = Object.assign({}, dl); delete out.json; return out;
+      })
     };
 
-    // ── Trim payload to stay under Firestore's 1 MiB document limit ──────────
-    if (Array.isArray(saveObj.invoices)) {
-      saveObj.invoices = saveObj.invoices.map(function(inv) {
-        const out = Object.assign({}, inv);
-        if (Array.isArray(inv.items) && inv.items.length > 0) delete out.invoiceText;
-        return out;
-      });
+    var mainJsonStr = JSON.stringify(saveObj);
+
+    // 5. Emergency trim if either doc is still large
+    if (mainJsonStr.length > 900000) {
+      saveObj.activityLog      = (DB.activityLog      || []).slice(0, 50);
+      saveObj.adminActivityLog = (DB.adminActivityLog || []).slice(0, 30);
+      saveObj.recycleBin       = (DB.recycleBin       || []).slice(0, 5);
+      saveObj.notifications    = (DB.notifications    || []).slice(0, 5);
+      mainJsonStr = JSON.stringify(saveObj);
+      setTimeout(function() { showToast('ℹ Storage auto-cleanup: logs trimmed. Download a backup in Settings.', false); }, 1500);
     }
-    if (Array.isArray(saveObj.finance) && window._seedDefaultsMap) {
-      saveObj.finance = saveObj.finance.filter(function(r) {
-        if (!r.id || !r.id.startsWith('fin_seed_')) return true;
-        const def = window._seedDefaultsMap[r.id];
-        if (!def) return true;
-        return (r.paidAmount !== def.paidAmount || r.status !== def.status ||
-                r.amount !== def.amount || r.paymentMethod !== def.paymentMethod);
-      });
-    }
-    if (Array.isArray(saveObj.activityLog) && saveObj.activityLog.length > 200) {
-      saveObj.activityLog = saveObj.activityLog.slice(0, 200);
-    }
-    if (Array.isArray(saveObj.appDownloads)) {
-      saveObj.appDownloads = saveObj.appDownloads.map(function(dl) {
-        const out = Object.assign({}, dl);
-        delete out.json;
-        return out;
-      });
-    }
-    // Cap adminActivityLog — was uncapped, at 500 entries = ~114 KB in cloud
-    if (Array.isArray(saveObj.adminActivityLog) && saveObj.adminActivityLog.length > 100) {
-      saveObj.adminActivityLog = saveObj.adminActivityLog.slice(0, 100);
-    }
-    // Cap recycleBin — oldest deleted records are least useful; keep 20
-    if (Array.isArray(saveObj.recycleBin) && saveObj.recycleBin.length > 20) {
-      saveObj.recycleBin = saveObj.recycleBin.slice(0, 20);
-    }
-    // Cap notifications in cloud payload
-    if (Array.isArray(saveObj.notifications) && saveObj.notifications.length > 20) {
-      saveObj.notifications = saveObj.notifications.slice(0, 20);
+    if (activeJsonStr.length > 900000) {
+      setTimeout(function() { showToast('⚠ Active records are large (' + Math.round(activeJsonStr.length/1024) + ' KB). Consider checking the Archives page.', true); }, 1500);
     }
 
-    let jsonStr = JSON.stringify(saveObj);
-    // Emergency guard: if payload is still approaching 1 MB, cut logs further
-    if (jsonStr.length > 950000) {
-      if (Array.isArray(saveObj.activityLog)) saveObj.activityLog = saveObj.activityLog.slice(0, 50);
-      if (Array.isArray(saveObj.adminActivityLog)) saveObj.adminActivityLog = saveObj.adminActivityLog.slice(0, 30);
-      if (Array.isArray(saveObj.recycleBin)) saveObj.recycleBin = saveObj.recycleBin.slice(0, 5);
-      if (Array.isArray(saveObj.notifications)) saveObj.notifications = saveObj.notifications.slice(0, 5);
-      jsonStr = JSON.stringify(saveObj);
-      // Let user know auto-cleanup ran (only once per session via _storageWarnedLevel guard)
-      setTimeout(() => showToast('ℹ Storage auto-cleanup: old logs trimmed to keep saves working. Download a backup in Settings.', false), 1500);
-    }
-
-    // ── Storage meter: measure payload and build breakdown ────────────────
-    window._lastPayloadBytes = jsonStr.length; // approx byte count (UTF-8, mostly ASCII)
+    // 6. Update storage meter
+    window._lastPayloadBytes = mainJsonStr.length + activeJsonStr.length;
     try {
-      const _so = saveObj;
-      const _kb = function(arr) { return Math.round(JSON.stringify(arr || []).length / 1024); };
-      const invKB = _kb(_so.invoices); const finKB = _kb(_so.finance);
-      const delKB = _kb(_so.deliveries);
-      const logKB = _kb(_so.activityLog) + _kb(_so.adminActivityLog);
-      const recKB = _kb(_so.recycleBin);
-      const otherKB = Math.max(0, Math.round(jsonStr.length / 1024) - invKB - finKB - delKB - logKB - recKB);
-      window._lastPayloadBreakdown = { invoices: invKB, finance: finKB, deliveries: delKB, logs: logKB, recycle: recKB, other: otherKB };
+      var _kb = function(arr) { return Math.round(JSON.stringify(arr || []).length / 1024); };
+      window._lastPayloadBreakdown = {
+        invoices:   _kb(partition.active.invoices),
+        finance:    _kb(partition.active.finance),
+        deliveries: _kb(partition.active.deliveries),
+        logs:       _kb(saveObj.activityLog) + _kb(saveObj.adminActivityLog),
+        recycle:    _kb(saveObj.recycleBin),
+        other:      Math.max(0, Math.round(mainJsonStr.length / 1024) -
+                      _kb(saveObj.activityLog) - _kb(saveObj.adminActivityLog) - _kb(saveObj.recycleBin))
+      };
     } catch(_) {}
     _checkStorageLevel();
 
@@ -9247,31 +9614,25 @@ async function _doCloudSave() {
     if (lsd) lsd.textContent = new Date().toLocaleTimeString();
 
     if (!window._fbSetData) {
-      if (ind) {
-        ind.textContent = '⚠ Cloud unavailable';
-        ind.style.color = 'var(--danger)';
-        ind.style.display = 'inline'; ind.style.opacity = '1';
-        clearTimeout(ind._hideTimer);
-      }
+      if (ind) { ind.textContent = '⚠ Cloud unavailable'; ind.style.color = 'var(--danger)'; ind.style.display = 'inline'; ind.style.opacity = '1'; clearTimeout(ind._hideTimer); }
       return false;
     }
 
-    if (ind) {
-      ind.textContent = '⏳ Saving…'; ind.style.color = 'var(--muted)';
-      ind.style.display = 'inline'; ind.style.opacity = '1';
-      clearTimeout(ind._hideTimer);
-    }
+    if (ind) { ind.textContent = '⏳ Saving…'; ind.style.color = 'var(--muted)'; ind.style.display = 'inline'; ind.style.opacity = '1'; clearTimeout(ind._hideTimer); }
 
     const _fbSaveTimeout = setTimeout(function() {
-      if (ind && ind.textContent === '⏳ Saving…') {
-        ind.textContent = '⏳ Slow connection…'; ind.style.color = 'var(--accent)';
-      }
+      if (ind && ind.textContent === '⏳ Saving…') { ind.textContent = '⏳ Slow connection…'; ind.style.color = 'var(--accent)'; }
     }, 15000);
 
+    // 7. Write both docs in parallel
     window._fbSavePending = true;
     let ok = false;
     try {
-      ok = await window._fbSetData(jsonStr);
+      var results = await Promise.all([
+        window._fbSetData(mainJsonStr),
+        window._fbSetActiveRecords(activeJsonStr)
+      ]);
+      ok = results[0] && results[1];
     } catch (caughtErr) {
       ok = false;
     } finally {
@@ -9286,54 +9647,32 @@ async function _doCloudSave() {
         ind.textContent = '✓ Saved'; ind.style.color = 'var(--success)';
         ind.style.display = 'inline'; ind.style.opacity = '1';
         clearTimeout(ind._hideTimer);
-        ind._hideTimer = setTimeout(() => {
-          ind.style.opacity = '0';
-          setTimeout(() => { ind.style.display = ''; }, 400);
-        }, 2200);
+        ind._hideTimer = setTimeout(() => { ind.style.opacity = '0'; setTimeout(() => { ind.style.display = ''; }, 400); }, 2200);
       }
       return true;
     }
 
-    if (ind) {
-      const _reason = _getSaveFailReason();
-      ind.textContent = _reason ? '⚠ ' + _reason : '⚠ Save failed';
-      ind.style.color = 'var(--danger)';
-      ind.style.display = 'inline'; ind.style.opacity = '1';
-      clearTimeout(ind._hideTimer);
-    }
-    // Auto-retry on failure: 20s → 40s → 60s → 90s → 120s (5 attempts)
+    const _reason = _getSaveFailReason();
+    window._logAppError('save-fail', (_reason || 'Save failed') + ' — payload: ' + Math.round((window._lastPayloadBytes || 0) / 1024) + ' KB',
+      window._fbLastSaveError ? String(window._fbLastSaveError.message || window._fbLastSaveError.code || window._fbLastSaveError) : '(no error detail)');
+    if (ind) { ind.textContent = _reason ? '⚠ ' + _reason : '⚠ Save failed'; ind.style.color = 'var(--danger)'; ind.style.display = 'inline'; ind.style.opacity = '1'; clearTimeout(ind._hideTimer); }
+    if (_reason === 'Data too large') { setTimeout(() => _showStorageFullLockout(), 600); return false; }
     if (_saveRetryCount < 5 && window._appDataReady) {
       _saveRetryCount++;
       const _retryDelay = Math.min(20000 * _saveRetryCount, 120000);
       clearTimeout(_saveRetryTimer);
-      _saveRetryTimer = setTimeout(() => {
-        if (window._appDataReady && currentAccountUsername) _doCloudSave();
-      }, _retryDelay);
+      _saveRetryTimer = setTimeout(() => { if (window._appDataReady && currentAccountUsername) _doCloudSave(); }, _retryDelay);
     }
     return false;
   } catch (e) {
     const ind = document.getElementById('autosave-indicator');
-    if (ind) {
-      const _reason = _getSaveFailReason() || 'Save failed';
-      ind.textContent = '⚠ ' + _reason;
-      ind.style.color = 'var(--danger)';
-      ind.style.display = 'inline'; ind.style.opacity = '1';
-      clearTimeout(ind._hideTimer);
-    }
-    if (_saveRetryCount < 5 && window._appDataReady) {
-      _saveRetryCount++;
-      const _retryDelay = Math.min(20000 * _saveRetryCount, 120000);
-      clearTimeout(_saveRetryTimer);
-      _saveRetryTimer = setTimeout(() => {
-        if (window._appDataReady && currentAccountUsername) _doCloudSave();
-      }, _retryDelay);
-    }
+    if (ind) { const _reason = _getSaveFailReason() || 'Save failed'; ind.textContent = '⚠ ' + _reason; ind.style.color = 'var(--danger)'; ind.style.display = 'inline'; ind.style.opacity = '1'; clearTimeout(ind._hideTimer); }
     return false;
   }
 }
 
 function exportDataBackup() {
-  const saveObj = { ...DB, _appVersion: '16.0', _savedAt: new Date().toISOString(),
+  const saveObj = { ...DB, _appVersion: '17.0', _savedAt: new Date().toISOString(),
     _schema: { invoiceFields: ['id','date','customerName','collectionDate','deliveryDate','items','total','paymentStatus','paidAmount','serviceTypes','invoiceText'],
                financeFields: ['id','customer','month','amount','paidAmount','status','paymentMethod','date','invoiceId'],
                deliveryFields: ['id','invoiceId','customer','serviceTypes','collectionDate','expectedDate','status','deliveredDate'] } };
@@ -9343,9 +9682,31 @@ function exportDataBackup() {
   const dateStr = new Date().toISOString().split('T')[0];
   a.download = `WashnFold_Backup_${dateStr}.json`;
   a.click();
-  logActivity('Data Backup', `Full data backup downloaded (v16.0)`, 'settings');
-  _storageWarnedLevel = 0; // allow warnings to show again in future sessions if storage stays high
-  showToast('Backup downloaded ✓');
+  logActivity('Data Backup', `Full data backup downloaded (v17.0)`, 'settings');
+  _storageWarnedLevel = 0;
+  // Remove lockout overlay if it was showing
+  const _lockout = document.getElementById('storage-full-lockout');
+  const _wasLocked = !!_lockout;
+  if (_lockout) _lockout.remove();
+  _measureCurrentPayload();
+  if (_wasLocked) {
+    // Storage is still full — show a persistent (non-blocking) reminder
+    const _existing = document.getElementById('storage-post-download-banner');
+    if (_existing) _existing.remove();
+    const _banner = document.createElement('div');
+    _banner.id = 'storage-post-download-banner';
+    _banner.style.cssText = 'position:fixed;top:0;left:0;right:0;z-index:99998;background:rgba(232,197,71,0.13);border-bottom:2px solid rgba(232,197,71,0.45);padding:0.7rem 1.1rem;display:flex;align-items:center;justify-content:space-between;gap:1rem;flex-wrap:wrap;font-family:"DM Sans",sans-serif;';
+    _banner.innerHTML = `
+      <span style="font-size:0.83rem;color:var(--accent);"><b>⚠ Storage still full.</b> <span style="color:var(--muted);">Backup saved ✓ — To restore cloud saves, delete old paid records in Finance or empty the Recycle Bin to free space.</span></span>
+      <div style="display:flex;gap:0.6rem;flex-shrink:0;">
+        <button onclick="showPage('finance')" style="background:rgba(232,197,71,0.15);border:1px solid rgba(232,197,71,0.4);color:var(--accent);border-radius:6px;padding:0.35rem 0.75rem;font-size:0.78rem;cursor:pointer;font-family:'DM Mono',monospace;">Go to Finance</button>
+        <button onclick="document.getElementById('storage-post-download-banner').remove()" style="background:none;border:none;color:var(--muted);font-size:1.1rem;cursor:pointer;padding:0 0.3rem;line-height:1;">✕</button>
+      </div>`;
+    document.body.appendChild(_banner);
+    showToast('Backup downloaded ✓ — storage is still full, see banner for next steps.');
+  } else {
+    showToast('Backup downloaded ✓');
+  }
 }
 
 function loadDataFile(input) {
@@ -11709,6 +12070,7 @@ function _ruleExtract(raw) {
 
 function aiConfirmImport() {
   if (_aiImportBusy) return;
+  if (window._lastPayloadBytes > 0 && window._lastPayloadBytes >= _STORAGE_LIMIT_BYTES) { _showStorageFullLockout(); return; }
   const customerName = (document.getElementById('ai-customer-name')?.value || '').trim();
   const invoiceDate  = document.getElementById('ai-invoice-date')?.value  || '';
   const collDate     = document.getElementById('ai-collection-date')?.value || '';
@@ -11775,8 +12137,8 @@ function aiConfirmImport() {
 
   renderAll();
   logActivity('AI Import', 'Imported invoice for ' + customerName + ' — ' + totalAmount.toLocaleString() + ' FCFA (' + payMonth + ')');
+  _aiImportBusy = false; // release immediately — records are in DB, double-click is no longer possible
   saveData(true).then(saved => {
-    _aiImportBusy = false;
     if (!saved) showToast('⚠ Invoice added to this session but cloud sync failed — check your connection!', true);
   });
 
@@ -11790,6 +12152,105 @@ function aiConfirmImport() {
   showToast('✅ Invoice for ' + customerName + ' imported & synced ✓');
   addNotification('Invoice imported: ' + customerName + ' — ' + totalAmount.toLocaleString() + ' FCFA', 'success');
 }
+
+// ══════════════════════════════════════════════════════════════════
+// ARCHIVE VIEWER — browse & export records older than 90 days
+// ══════════════════════════════════════════════════════════════════
+window._archiveCache = {};
+
+async function loadArchivePage() {
+  const listEl = document.getElementById('archive-month-list');
+  const viewEl = document.getElementById('archive-viewer-content');
+  if (!listEl) return;
+  listEl.innerHTML = '<span style="color:var(--muted);font-size:0.83rem;">Loading...</span>';
+  if (viewEl) viewEl.innerHTML = '';
+
+  const keys = await window._fbListArchives();
+  if (!keys || keys.length === 0) {
+    listEl.innerHTML = '<span style="color:var(--muted);font-size:0.83rem;">No archives yet. Records older than 90 days will appear here automatically once they age out.</span>';
+    return;
+  }
+
+  listEl.innerHTML = keys.map(function(mk) {
+    const parts = mk.split('_');
+    const label = parts.length === 2
+      ? new Date(parseInt(parts[0]), parseInt(parts[1]) - 1, 1)
+          .toLocaleDateString('en-GB', { month: 'long', year: 'numeric' })
+      : mk;
+    return `<button onclick="viewArchiveMonth('${mk}')" style="background:rgba(78,205,196,0.1);border:1px solid rgba(78,205,196,0.35);color:var(--accent2);border-radius:8px;padding:0.45rem 0.9rem;font-family:'DM Mono',monospace;font-size:0.78rem;cursor:pointer;">${label}</button>`;
+  }).join('');
+}
+
+async function viewArchiveMonth(mk) {
+  const viewEl = document.getElementById('archive-viewer-content');
+  if (!viewEl) return;
+  viewEl.innerHTML = `<p style="color:var(--muted);font-size:0.83rem;">Loading ${mk}...</p>`;
+
+  let data = window._archiveCache[mk];
+  if (!data) {
+    const raw = await window._fbGetArchive(mk);
+    if (!raw) {
+      viewEl.innerHTML = `<p style="color:var(--danger);font-size:0.83rem;">Failed to load archive for ${mk}. Check your connection and try again.</p>`;
+      return;
+    }
+    data = JSON.parse(raw);
+    window._archiveCache[mk] = data;
+  }
+
+  const invCount = (data.invoices   || []).length;
+  const finCount = (data.finance    || []).length;
+  const delCount = (data.deliveries || []).length;
+  const total    = (data.invoices   || []).reduce((s, inv) => s + (inv.total || 0), 0);
+  const parts    = mk.split('_');
+  const monthLabel = parts.length === 2
+    ? new Date(parseInt(parts[0]), parseInt(parts[1]) - 1, 1)
+        .toLocaleDateString('en-GB', { month: 'long', year: 'numeric' })
+    : mk;
+
+  viewEl.innerHTML =
+    `<div style="background:var(--surface2);border:1px solid var(--border);border-radius:10px;padding:1rem;margin-bottom:0.8rem;">
+      <div style="font-family:'DM Mono',monospace;font-size:0.78rem;color:var(--accent);margin-bottom:0.6rem;">Archive — ${monthLabel}</div>
+      <div style="display:flex;gap:1.5rem;flex-wrap:wrap;font-size:0.83rem;color:var(--text);">
+        <span>📄 <b>${invCount}</b> invoice${invCount !== 1 ? 's' : ''}</span>
+        <span>💰 <b>${finCount}</b> finance record${finCount !== 1 ? 's' : ''}</span>
+        <span>🚚 <b>${delCount}</b> deliver${delCount !== 1 ? 'ies' : 'y'}</span>
+        <span>💵 Total billed: <b>${total.toLocaleString()} FCFA</b></span>
+      </div>
+    </div>
+    <div style="display:flex;gap:0.6rem;flex-wrap:wrap;margin-bottom:1rem;">
+      <button onclick="exportArchiveMonthJSON('${mk}')" style="background:rgba(81,207,102,0.1);border:1px solid rgba(81,207,102,0.35);color:var(--success);border-radius:8px;padding:0.4rem 0.8rem;font-family:'DM Mono',monospace;font-size:0.78rem;cursor:pointer;">⬇ Export as JSON</button>
+    </div>
+    <div>${(data.invoices || []).map(inv =>
+      `<div style="border:1px solid var(--border);border-radius:8px;padding:0.6rem 0.9rem;margin-bottom:0.4rem;font-size:0.8rem;">
+        <span style="font-family:'DM Mono',monospace;color:var(--accent);margin-right:0.8rem;">${inv.id || ''}</span>
+        <b>${inv.customerName || ''}</b> &mdash; ${inv.collectionDate || ''} &mdash; ${(inv.total || 0).toLocaleString()} FCFA &mdash;
+        <span style="color:${inv.paymentStatus === 'paid' ? 'var(--success)' : 'var(--accent)'}">${inv.paymentStatus || ''}</span>
+      </div>`
+    ).join('')}</div>`;
+}
+
+function exportArchiveMonthJSON(mk) {
+  const data = window._archiveCache[mk];
+  if (!data) { showToast('Load the month first before exporting.', true); return; }
+  const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = `WashnFold_Archive_${mk}.json`;
+  a.click();
+  showToast('Archive exported ✓');
+  logActivity('Archive Export', `Exported archive ${mk}`, 'archives');
+}
+
+// Patch showPage so the archive list loads when the Archives tab is opened
+document.addEventListener('DOMContentLoaded', function() {
+  const _origSP = window.showPage;
+  if (typeof _origSP === 'function') {
+    window.showPage = function(page) {
+      _origSP(page);
+      if (page === 'archives') loadArchivePage();
+    };
+  }
+});
 
 // ── Add spin animation if not already present ────────────────────
 (function() {
