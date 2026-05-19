@@ -3235,7 +3235,16 @@ function _performLogout(isAuto) {
   };
 
   // Build active records payload and write archive months
-  const _logoutPartition = _partitionRecords(DB.invoices, DB.finance, DB.deliveries);
+  // Exclude unchanged seed finance records (re-injected from hardcoded data on login)
+  var _logoutSeedMap = window._seedDefaultsMap || {};
+  var _logoutFinance = (DB.finance || []).filter(function(r) {
+    if (!r || !r.id || !r.id.startsWith('fin_seed_')) return true;
+    var def = _logoutSeedMap[r.id];
+    if (!def) return true;
+    return (r.paidAmount !== def.paidAmount || r.status !== def.status ||
+            r.amount !== def.amount || r.paymentMethod !== def.paymentMethod);
+  });
+  const _logoutPartition = _partitionRecords(DB.invoices, _logoutFinance, DB.deliveries);
   Object.keys(_logoutPartition.archive).forEach(function(mk) {
     if (!window._archivedMonths.has(mk)) {
       const archObj = {
@@ -9281,7 +9290,8 @@ let _paymentBusy = false;
 let _aiImportBusy = false;
 
 // ── Cloud Storage Meter & Progressive Warnings ────────────────────────────────
-const _STORAGE_LIMIT_BYTES = 1048576; // Firestore 1 MiB per-document hard limit
+const _STORAGE_LIMIT_BYTES = 1887437; // v17: 1.8 MiB combined ceiling (two docs, 900 KB safe limit each)
+const _SINGLE_DOC_LIMIT_BYTES = 921600; // 900 KB per-document trim threshold
 let _storageWarnedLevel = 0; // highest % threshold already warned this session
 
 function _updateStorageMeterUI() {
@@ -9299,7 +9309,7 @@ function _updateStorageMeterUI() {
 
   if (bar) { bar.style.width = pct + '%'; bar.style.background = color; }
   if (lbl) { lbl.textContent = pct + '% used'; lbl.style.color = color; }
-  if (kbt) kbt.textContent = kb.toLocaleString() + ' KB across 2 cloud documents (each limit: 1,024 KB)';
+  if (kbt) kbt.textContent = kb.toLocaleString() + ' KB across 2 cloud documents (combined limit: ~1,800 KB)';
   if (dot) {
     dot.style.display = 'inline-block';
     dot.style.background = color;
@@ -9525,8 +9535,20 @@ async function _doCloudSave() {
     const _nowISO = new Date().toISOString();
     window._loginDataSavedAt = _nowISO;
 
-    // 1. Partition records
-    var partition = _partitionRecords(DB.invoices, DB.finance, DB.deliveries);
+    // 1. Partition records — exclude unchanged seed finance records (they are
+    //    hardcoded in the app and never need to be stored in Firestore)
+    var _seedMap = window._seedDefaultsMap || {};
+    var _invoicesToPartition  = DB.invoices;
+    var _deliveriesToPartition = DB.deliveries;
+    var _financeToPartition = (DB.finance || []).filter(function(r) {
+      if (!r || !r.id || !r.id.startsWith('fin_seed_')) return true; // keep real records
+      var def = _seedMap[r.id];
+      if (!def) return true; // keep if no default known
+      // Exclude if unchanged from seed defaults — they'll be re-injected from _loadSeedData on next login
+      return (r.paidAmount !== def.paidAmount || r.status !== def.status ||
+              r.amount !== def.amount || r.paymentMethod !== def.paymentMethod);
+    });
+    var partition = _partitionRecords(_invoicesToPartition, _financeToPartition, _deliveriesToPartition);
 
     // 2. Write new archive months (fire-and-forget, don't block main save)
     Object.keys(partition.archive).forEach(function(mk) {
@@ -9581,7 +9603,7 @@ async function _doCloudSave() {
     var mainJsonStr = JSON.stringify(saveObj);
 
     // 5. Emergency trim if either doc is still large
-    if (mainJsonStr.length > 900000) {
+    if (mainJsonStr.length > _SINGLE_DOC_LIMIT_BYTES) {
       saveObj.activityLog      = (DB.activityLog      || []).slice(0, 50);
       saveObj.adminActivityLog = (DB.adminActivityLog || []).slice(0, 30);
       saveObj.recycleBin       = (DB.recycleBin       || []).slice(0, 5);
@@ -9589,7 +9611,7 @@ async function _doCloudSave() {
       mainJsonStr = JSON.stringify(saveObj);
       setTimeout(function() { showToast('ℹ Storage auto-cleanup: logs trimmed. Download a backup in Settings.', false); }, 1500);
     }
-    if (activeJsonStr.length > 900000) {
+    if (activeJsonStr.length > _SINGLE_DOC_LIMIT_BYTES) {
       setTimeout(function() { showToast('⚠ Active records are large (' + Math.round(activeJsonStr.length/1024) + ' KB). Consider checking the Archives page.', true); }, 1500);
     }
 
