@@ -196,7 +196,7 @@ window._initFirebase = function() {
           payload: jsonStr, updatedAt: new Date().toISOString()
         });
         return true;
-      } catch(e) { return false; }
+      } catch(e) { window._fbLastSaveError = e; return false; }
     };
 
     // ── v17: read invoices+deliveries document ────────────────────────────────
@@ -214,7 +214,7 @@ window._initFirebase = function() {
           payload: jsonStr, updatedAt: new Date().toISOString()
         });
         return true;
-      } catch(e) { return false; }
+      } catch(e) { window._fbLastSaveError = e; return false; }
     };
 
     // ── v17: read finance document ────────────────────────────────────────────
@@ -9641,7 +9641,6 @@ async function _doCloudSave() {
     // 3. Invoices+deliveries payload (slim — strip redundant fields)
     var slimInvoices = partition.active.invoices.map(function(inv) {
       var out = Object.assign({}, inv);
-      out.pop = undefined; // safety
       delete out.invoiceText;
       delete out._importedViaAI;
       delete out.customer;       // duplicate of customerName
@@ -9744,18 +9743,34 @@ async function _doCloudSave() {
       if (ind && ind.textContent === '⏳ Saving…') { ind.textContent = '⏳ Slow connection…'; ind.style.color = 'var(--accent)'; }
     }, 15000);
 
-    // 7. Write all three docs in parallel
+    // 7. Write all three docs in parallel — log individual sizes for debugging
+    const _mainKB    = Math.round(mainJsonStr.length    / 1024);
+    const _invKB     = Math.round(invoicesJsonStr.length / 1024);
+    const _finKB     = Math.round(financeJsonStr.length  / 1024);
+    window._lastDocSizes = { main: _mainKB, invoices: _invKB, finance: _finKB };
+
     window._fbSavePending = true;
     let ok = false;
     try {
+      window._fbLastSaveError = null;
       var results = await Promise.all([
         window._fbSetData(mainJsonStr),
         window._fbSetInvoicesDoc(invoicesJsonStr),
         window._fbSetFinanceDoc(financeJsonStr)
       ]);
       ok = results[0] && results[1] && results[2];
+      if (!ok) {
+        // Log which specific document failed to help diagnose
+        var failedDocs = [];
+        if (!results[0]) failedDocs.push('appdata(' + _mainKB + 'KB)');
+        if (!results[1]) failedDocs.push('records_invoices(' + _invKB + 'KB)');
+        if (!results[2]) failedDocs.push('records_finance(' + _finKB + 'KB)');
+        window._logAppError('save-fail', 'Document(s) failed: ' + failedDocs.join(', '),
+          window._fbLastSaveError ? String(window._fbLastSaveError.message || window._fbLastSaveError.code || window._fbLastSaveError) : '(no Firestore error detail)');
+      }
     } catch (caughtErr) {
       ok = false;
+      window._fbLastSaveError = caughtErr;
     } finally {
       clearTimeout(_fbSaveTimeout);
       window._fbSavePending = false;
@@ -9774,7 +9789,9 @@ async function _doCloudSave() {
     }
 
     const _reason = _getSaveFailReason();
-    window._logAppError('save-fail', (_reason || 'Save failed') + ' — payload: ' + Math.round((window._lastPayloadBytes || 0) / 1024) + ' KB',
+    const _docSizes = window._lastDocSizes || {};
+    const _sizeDetail = 'appdata:' + (_docSizes.main||'?') + 'KB invoices:' + (_docSizes.invoices||'?') + 'KB finance:' + (_docSizes.finance||'?') + 'KB';
+    window._logAppError('save-fail', (_reason || 'Save failed') + ' — ' + _sizeDetail,
       window._fbLastSaveError ? String(window._fbLastSaveError.message || window._fbLastSaveError.code || window._fbLastSaveError) : '(no error detail)');
     if (ind) { ind.textContent = _reason ? '⚠ ' + _reason : '⚠ Save failed'; ind.style.color = 'var(--danger)'; ind.style.display = 'inline'; ind.style.opacity = '1'; clearTimeout(ind._hideTimer); }
     if (_reason === 'Data too large') { setTimeout(() => _showStorageFullLockout(), 600); return false; }
