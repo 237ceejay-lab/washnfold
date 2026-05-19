@@ -7419,29 +7419,10 @@ function renderOverview() {
     propEl.innerHTML = actions.map(a => `<div style="padding:0.5rem 0;border-bottom:1px solid var(--border);font-size:0.85rem;">${a}</div>`).join('');
   }
 
-  // Storage strip
+  // Storage strip — rendered by _updateStorageMeterUI (called via _measureCurrentPayload)
   const _strip = document.getElementById('overview-storage-strip');
-  if (_strip) {
-    if (!window._lastPayloadBytes) _measureCurrentPayload();
-    const _bytes = window._lastPayloadBytes || 0;
-    if (_bytes > 0) {
-      // Use largest single-doc size — same logic as Settings page meter
-      const _docSizes = window._lastDocSizes || {};
-      const _largestKB = Math.max(_docSizes.main || 0, _docSizes.invoices || 0, _docSizes.finance || 0);
-      const _pct   = Math.min(Math.round(_largestKB * 1024 / _SINGLE_DOC_LIMIT_BYTES * 100), 100);
-      const _totalKB = Math.round(_bytes / 1024);
-      const _color = _pct >= 90 ? 'var(--danger)' : _pct >= 75 ? 'var(--accent)' : _pct >= 60 ? '#f0a500' : 'var(--success)';
-      _strip.style.display = '';
-      _strip.innerHTML = `<div style="background:var(--surface);border-radius:10px;padding:0.7rem 1rem;border:1px solid rgba(255,255,255,0.07);display:flex;align-items:center;gap:1rem;flex-wrap:wrap;">
-        <span style="font-size:0.79rem;color:var(--muted);white-space:nowrap;flex-shrink:0;">☁ Cloud Storage</span>
-        <div style="flex:1;min-width:100px;background:rgba(255,255,255,0.08);border-radius:4px;height:6px;overflow:hidden;">
-          <div style="height:100%;width:${_pct}%;background:${_color};border-radius:4px;transition:width 0.7s,background 0.4s;"></div>
-        </div>
-        <span style="font-size:0.78rem;font-family:'DM Mono',monospace;color:${_color};white-space:nowrap;">${_pct}%&nbsp;&nbsp;${_largestKB} / 900 KB</span>
-        <span onclick="showPage('settings')" style="font-size:0.72rem;color:var(--muted);cursor:pointer;white-space:nowrap;text-decoration:underline;text-underline-offset:2px;">Details →</span>
-      </div>`;
-    }
-  }
+  if (_strip && !window._lastPayloadBytes) _measureCurrentPayload();
+  else if (_strip && window._lastPayloadBytes) _updateStorageMeterUI();
 }
 
 // ══════════════════════════════════════════════════════════════════
@@ -9434,15 +9415,17 @@ let _storageWarnedLevel = 0; // highest % threshold already warned this session
 function _updateStorageMeterUI() {
   const bytes = window._lastPayloadBytes || 0;
   if (!bytes) return;
-  // Show percentage based on the largest single document, not the combined total.
-  // The bottleneck is whichever individual doc is closest to its 900 KB limit.
+
+  // Shared calculation — single source of truth used by both Overview and Settings
   const docSizes = window._lastDocSizes || {};
   const largestDocKB = Math.max(docSizes.main || 0, docSizes.invoices || 0, docSizes.finance || 0);
   const largestDocBytes = largestDocKB * 1024;
-  const pct = Math.min(Math.round(largestDocBytes / _SINGLE_DOC_LIMIT_BYTES * 100), 100);
-  const kb  = Math.round(bytes / 1024);
+  const pct   = Math.min(Math.round(largestDocBytes / _SINGLE_DOC_LIMIT_BYTES * 100), 100);
+  const totalKB = Math.round(bytes / 1024);
   const color = pct >= 90 ? 'var(--danger)' : pct >= 75 ? 'var(--accent)' : pct >= 60 ? '#f0a500' : 'var(--success)';
+  const label = largestDocKB + ' KB / 900 KB';
 
+  // ── Settings page meter ───────────────────────────────────────────────────
   const bar = document.getElementById('storage-meter-bar');
   const lbl = document.getElementById('storage-pct-label');
   const kbt = document.getElementById('storage-kb-text');
@@ -9451,24 +9434,40 @@ function _updateStorageMeterUI() {
 
   if (bar) { bar.style.width = pct + '%'; bar.style.background = color; }
   if (lbl) { lbl.textContent = pct + '% used'; lbl.style.color = color; }
-  if (kbt) kbt.textContent = kb.toLocaleString() + ' KB total across 3 documents — largest: ' + largestDocKB + ' KB / 900 KB limit';
+  if (kbt) kbt.textContent = totalKB.toLocaleString() + ' KB total — largest doc: ' + label;
   if (dot) {
     dot.style.display = 'inline-block';
     dot.style.background = color;
-    dot.title = 'Cloud storage: largest doc ' + largestDocKB + ' KB / 900 KB (' + pct + '%) — click to view in Settings';
+    dot.title = 'Cloud storage: ' + label + ' (' + pct + '%) — click to view in Settings';
   }
   if (bkd && window._lastPayloadBreakdown) {
     const b = window._lastPayloadBreakdown;
     bkd.style.display = '';
     bkd.innerHTML =
       '📦 Invoices doc: <b>' + (docSizes.invoices || 0) + ' KB</b> &nbsp;|&nbsp; ' +
-      '💰 Finance doc: <b>' + (docSizes.finance || 0) + ' KB</b> &nbsp;|&nbsp; ' +
-      '⚙ Appdata doc: <b>' + (docSizes.main || 0) + ' KB</b><br>' +
-      '&nbsp;&nbsp;↳ Invoices: <b>' + b.invoices + ' KB</b> &nbsp;|&nbsp; ' +
-      'Finance: <b>' + b.finance + ' KB</b> &nbsp;|&nbsp; ' +
+      '💰 Finance doc: <b>' + (docSizes.finance  || 0) + ' KB</b> &nbsp;|&nbsp; ' +
+      '⚙ Appdata doc: <b>' + (docSizes.main     || 0) + ' KB</b><br>' +
+      '&nbsp;&nbsp;↳ Invoices: <b>' + b.invoices  + ' KB</b> &nbsp;|&nbsp; ' +
+      'Finance: <b>'    + b.finance   + ' KB</b> &nbsp;|&nbsp; ' +
       'Deliveries: <b>' + b.deliveries + ' KB</b> &nbsp;|&nbsp; ' +
-      'Logs: <b>' + b.logs + ' KB</b> &nbsp;|&nbsp; ' +
-      'Bin: <b>' + b.recycle + ' KB</b>';
+      'Logs: <b>'       + b.logs      + ' KB</b> &nbsp;|&nbsp; ' +
+      'Bin: <b>'        + b.recycle   + ' KB</b>';
+  }
+
+  // ── Overview strip — always kept in sync with Settings ───────────────────
+  const strip = document.getElementById('overview-storage-strip');
+  if (strip && bytes > 0) {
+    strip.style.display = '';
+    strip.innerHTML =
+      `<div style="background:var(--surface);border-radius:10px;padding:0.7rem 1rem;` +
+      `border:1px solid rgba(255,255,255,0.07);display:flex;align-items:center;gap:1rem;flex-wrap:wrap;">` +
+      `<span style="font-size:0.79rem;color:var(--muted);white-space:nowrap;flex-shrink:0;">☁ Cloud Storage</span>` +
+      `<div style="flex:1;min-width:100px;background:rgba(255,255,255,0.08);border-radius:4px;height:6px;overflow:hidden;">` +
+      `<div style="height:100%;width:${pct}%;background:${color};border-radius:4px;transition:width 0.7s,background 0.4s;"></div>` +
+      `</div>` +
+      `<span style="font-size:0.78rem;font-family:'DM Mono',monospace;color:${color};white-space:nowrap;">${pct}%&nbsp;&nbsp;${label}</span>` +
+      `<span onclick="showPage('settings')" style="font-size:0.72rem;color:var(--muted);cursor:pointer;white-space:nowrap;text-decoration:underline;text-underline-offset:2px;">Details →</span>` +
+      `</div>`;
   }
 }
 
@@ -9595,6 +9594,12 @@ function _measureCurrentPayload() {
     };
     const mainJson = JSON.stringify(mainObj);
     window._lastPayloadBytes = mainJson.length + invJson.length + finJson.length;
+    // Always keep _lastDocSizes in sync so the storage bar has real values
+    window._lastDocSizes = {
+      main:     Math.round(mainJson.length / 1024),
+      invoices: Math.round(invJson.length  / 1024),
+      finance:  Math.round(finJson.length  / 1024)
+    };
     const _kb = function(arr) { return Math.round(JSON.stringify(arr || []).length / 1024); };
     window._lastPayloadBreakdown = {
       invoices:   _kb(partition.active.invoices),
