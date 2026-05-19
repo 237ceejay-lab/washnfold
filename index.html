@@ -2005,7 +2005,7 @@ body.mobile-view .card-title-row { flex-direction: column; align-items: flex-sta
           </div>
           <div style="display:flex;justify-content:space-between;margin-top:0.45rem;">
             <span id="storage-kb-text" style="font-size:0.72rem;color:var(--muted);font-family:'DM Mono',monospace;">Save data once to see reading</span>
-            <span style="font-size:0.72rem;color:var(--muted);">limit: 1,024 KB</span>
+            <span style="font-size:0.72rem;color:var(--muted);">limit: 900 KB per doc</span>
           </div>
           <div id="storage-breakdown" style="margin-top:0.6rem;font-size:0.72rem;color:var(--muted);line-height:1.7;display:none;"></div>
         </div>
@@ -3053,6 +3053,11 @@ async function loadCloudDataAndProceed() {
           }
         }
       }
+      // Re-inject seed finance records — they were excluded from cloud storage to save
+      // space but must always be present in DB.finance for correct overview counts.
+      // Reset _seedLoaded so _loadSeedData merges seeds into the freshly-loaded array.
+      window._seedLoaded = false;
+      _loadSeedData();
       if (msgEl) msgEl.textContent = '✓ All data loaded from cloud';
     } catch(e) {}
   }
@@ -7420,8 +7425,11 @@ function renderOverview() {
     if (!window._lastPayloadBytes) _measureCurrentPayload();
     const _bytes = window._lastPayloadBytes || 0;
     if (_bytes > 0) {
-      const _pct   = Math.min(Math.round(_bytes / _STORAGE_LIMIT_BYTES * 100), 100);
-      const _kb    = Math.round(_bytes / 1024);
+      // Use largest single-doc size — same logic as Settings page meter
+      const _docSizes = window._lastDocSizes || {};
+      const _largestKB = Math.max(_docSizes.main || 0, _docSizes.invoices || 0, _docSizes.finance || 0);
+      const _pct   = Math.min(Math.round(_largestKB * 1024 / _SINGLE_DOC_LIMIT_BYTES * 100), 100);
+      const _totalKB = Math.round(_bytes / 1024);
       const _color = _pct >= 90 ? 'var(--danger)' : _pct >= 75 ? 'var(--accent)' : _pct >= 60 ? '#f0a500' : 'var(--success)';
       _strip.style.display = '';
       _strip.innerHTML = `<div style="background:var(--surface);border-radius:10px;padding:0.7rem 1rem;border:1px solid rgba(255,255,255,0.07);display:flex;align-items:center;gap:1rem;flex-wrap:wrap;">
@@ -7429,7 +7437,7 @@ function renderOverview() {
         <div style="flex:1;min-width:100px;background:rgba(255,255,255,0.08);border-radius:4px;height:6px;overflow:hidden;">
           <div style="height:100%;width:${_pct}%;background:${_color};border-radius:4px;transition:width 0.7s,background 0.4s;"></div>
         </div>
-        <span style="font-size:0.78rem;font-family:'DM Mono',monospace;color:${_color};white-space:nowrap;">${_pct}%&nbsp;&nbsp;${_kb.toLocaleString()} / 1,024 KB</span>
+        <span style="font-size:0.78rem;font-family:'DM Mono',monospace;color:${_color};white-space:nowrap;">${_pct}%&nbsp;&nbsp;${_largestKB} / 900 KB</span>
         <span onclick="showPage('settings')" style="font-size:0.72rem;color:var(--muted);cursor:pointer;white-space:nowrap;text-decoration:underline;text-underline-offset:2px;">Details →</span>
       </div>`;
     }
@@ -8729,7 +8737,7 @@ function renderDebugConsole() {
   html += `<div style="color:var(--muted);font-size:0.72rem;letter-spacing:0.1em;margin-bottom:0.4rem;">APP STATUS</div>`;
   html += `<div>App Version: <span style="color:var(--accent2);">v17.0</span></div>`;
   html += `<div>Firebase: <span style="color:${fbOk ? 'var(--success)' : 'var(--danger)'};">${fbOk ? '✓ Connected' : window._firebaseBlocked ? '✗ Blocked / Offline' : '⏳ Connecting…'}</span></div>`;
-  html += `<div>Cloud Storage: <span style="color:${pct === null ? 'var(--muted)' : pct >= 100 ? 'var(--danger)' : pct >= 85 ? 'var(--accent)' : 'var(--success)'};">${pct === null ? '— (open Settings to measure)' : pct + '% (' + Math.round(bytes / 1024) + ' KB / 1,024 KB)'}</span></div>`;
+  html += `<div>Cloud Storage: <span style="color:${pct === null ? 'var(--muted)' : pct >= 100 ? 'var(--danger)' : pct >= 85 ? 'var(--accent)' : 'var(--success)'};">${pct === null ? '— (open Settings to measure)' : pct + '% (largest doc: ' + Math.max((window._lastDocSizes||{}).main||0,(window._lastDocSizes||{}).invoices||0,(window._lastDocSizes||{}).finance||0) + ' KB / 900 KB)'}</span></div>`;
   html += `<div>Last cloud save: <span style="color:var(--muted);">${lastSaved}</span></div>`;
   html += `<div>Session: <span style="color:var(--muted);">${currentAccountUsername || '—'} (${currentAccountType || '—'})</span></div>`;
   html += `<div>Browser: <span style="color:var(--muted);font-size:0.72rem;">${navigator.userAgent.slice(0, 90)}</span></div>`;
@@ -9709,7 +9717,7 @@ async function _doCloudSave() {
       delete out._importedViaAI;
       delete out.customer;       // duplicate of customerName
       delete out.expectedDate;   // duplicate of deliveryDate
-      delete out.status;         // duplicate of paymentStatus
+      // NOTE: do NOT delete out.status — kept for compatibility
       return out;
     });
     var slimDeliveries = partition.active.deliveries.map(function(del) {
